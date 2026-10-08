@@ -9,6 +9,51 @@ const SLOT_META_REASON: Record<Slot, string> = {
   "The Wildcard": "delightful surprise they might not expect",
 };
 
+const PICKED_PREFIX_RE = /^(picked because it\s+)+/i;
+
+function stripReasonJunk(raw: string): string {
+  return raw.replace(PICKED_PREFIX_RE, "").replace(/^why this fits:\s*/i, "").replace(/\.$/, "").trim();
+}
+
+function humanizeFragment(frag: string): string {
+  const f = stripReasonJunk(frag);
+  if (/^matches their\b/i.test(f)) return f;
+  if (/^matches\s+/i.test(f)) return f.replace(/^matches\s+/i, "matches their ");
+  if (/^fits the budget/i.test(f)) return "stays within their budget";
+  if (/^popular with/i.test(f)) return f;
+  if (/^available on/i.test(f)) return f;
+  if (/^matches the questionnaire/i.test(f)) return "lines up with their answers";
+  return f;
+}
+
+/**
+ * Build a single clean reason string — never double "Picked because it…".
+ * Claude sentences stay as-is; score fragments become "Why this fits: …".
+ */
+export function formatPickReason(reasons: string[], slotFallback: string): string {
+  const cleaned = reasons.map(stripReasonJunk).filter(Boolean);
+  if (!cleaned.length) {
+    return `Why this fits: ${slotFallback}.`;
+  }
+
+  const primary = cleaned[0]!;
+  const isScoreFragment = /^(matches |fits |popular |available |lines up )/i.test(primary);
+
+  if (!isScoreFragment) {
+    // Full Claude / human sentence — keep it, optionally append budget/fit crumbs.
+    const extras = cleaned
+      .slice(1)
+      .map(humanizeFragment)
+      .filter((e) => /budget|popular|available|matches their/i.test(e));
+    const base = /[.!?]$/.test(primary) ? primary : `${primary}.`;
+    if (!extras.length) return base;
+    return `${base.replace(/\.$/, "")} · Also ${extras.slice(0, 2).join(" and ")}.`;
+  }
+
+  const nice = cleaned.slice(0, 2).map(humanizeFragment).join(" and ");
+  return `Why this fits: it ${nice}.`;
+}
+
 /** Sort: most engaged/popular first, then questionnaire fit score. */
 export function sortByPopularityThenScore(scored: ScoredProduct[]): ScoredProduct[] {
   return [...scored].sort((a, b) => {
@@ -66,13 +111,12 @@ export function assignSlotsToAll(scored: ScoredProduct[]): Recommendation[] {
   const sorted = sortByPopularityThenScore(scored);
   return sorted.map((s, i) => {
     const slot = classifySlot(s, i, sorted);
-    const why = s.reasons.length ? s.reasons.slice(0, 2).join(" and ") : SLOT_META_REASON[slot];
     return {
       slot,
       rank: i + 1,
       product: s.product,
       score: Number(s.score.toFixed(4)),
-      reason: `Picked because it ${why}.`,
+      reason: formatPickReason(s.reasons, SLOT_META_REASON[slot]),
     };
   });
 }

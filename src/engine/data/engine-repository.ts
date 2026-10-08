@@ -3,16 +3,33 @@ import { getEngineDb } from "./server-db";
 import type { SegmentInsight } from "../ai/claude-suggest.server";
 import { amazonCatalog } from "../catalog/amazon-catalog";
 import { starterCatalog } from "../catalog/starter-catalog";
-import { withAmazonTag } from "../affiliates/amazon";
+import { amazonAsinUrl, withAmazonTag } from "../affiliates/amazon";
+import { extractAsin } from "../catalog/product-images";
+import { isAmazonPdpUrl, isAmazonSearchUrl } from "../catalog/product-validator";
 import { engineConfig } from "../config";
 import type { Product, ProductStats, Recommendation } from "../types";
 
 function tagAmazonProducts(products: Product[]): Product[] {
-  return products.map((p) => ({
-    ...p,
-    buyUrl: withAmazonTag(p.buyUrl),
-    provider: p.provider === "starter" ? "amazon" : p.provider,
-  }));
+  return products
+    .map((p) => {
+      const asin = extractAsin(p.buyUrl);
+      if (asin && (isAmazonPdpUrl(p.buyUrl) || isAmazonSearchUrl(p.buyUrl))) {
+        return {
+          ...p,
+          buyUrl: amazonAsinUrl(asin),
+          provider: "amazon" as const,
+        };
+      }
+      if (!p.buyUrl || isAmazonSearchUrl(p.buyUrl)) {
+        return null;
+      }
+      return {
+        ...p,
+        buyUrl: withAmazonTag(p.buyUrl),
+        provider: p.provider === "starter" ? ("amazon" as const) : p.provider,
+      };
+    })
+    .filter((p): p is Product => p != null);
 }
 
 function fallbackCatalog(): Product[] {

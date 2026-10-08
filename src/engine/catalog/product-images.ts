@@ -8,66 +8,43 @@ export function extractAsin(url: string | null | undefined): string | null {
   return m?.[1]?.toUpperCase() ?? null;
 }
 
-/** Amazon Associates image widget — works for real ASINs without PA-API. */
-export function amazonAsinImageUrl(asin: string, size: "_SL250_" | "_SL300_" | "_SL500_" = "_SL300_"): string {
-  const params = new URLSearchParams({
-    _encoding: "UTF8",
-    MarketPlace: "US",
-    ASIN: asin.toUpperCase(),
-    ServiceVersion: "20070822",
-    ID: "AsinImage",
-    WS: "1",
-    Format: size,
-  });
-  return `https://ws-na.amazon-adsystem.com/widgets/q?${params.toString()}`;
+export type AsinImageSize = 160 | 250 | 300 | 500;
+
+/**
+ * Direct Amazon product image (CDN) — works in the browser.
+ * The old Associates widget host (ws-na.amazon-adsystem.com) is often blocked
+ * by corporate proxies / ad blockers and shows as a blank placeholder.
+ */
+export function amazonAsinImageUrl(asin: string, size: AsinImageSize | "_SL160_" | "_SL250_" | "_SL300_" | "_SL500_" = 300): string {
+  const clean = asin.trim().toUpperCase();
+  const px =
+    typeof size === "number"
+      ? size
+      : Number((size.match(/\d+/) || ["300"])[0]) || 300;
+  return `https://m.media-amazon.com/images/P/${clean}.01._SCLZZZZZZZ_SX${px}_.jpg`;
 }
 
-/** Deterministic product photo from Openverse (Creative Commons). */
-async function openverseImage(query: string): Promise<string | null> {
-  const q = query.trim().slice(0, 80);
-  if (!q) return null;
-  try {
-    const url = new URL("https://api.openverse.org/v1/images/");
-    url.searchParams.set("q", q);
-    url.searchParams.set("page_size", "1");
-    url.searchParams.set("license_type", "commercial");
-    const res = await fetch(url, {
-      headers: { Accept: "application/json", "User-Agent": "BUYTHIS-GiftConcierge/1.0" },
-      signal: AbortSignal.timeout(4_000),
-    });
-    if (!res.ok) return null;
-    const data = (await res.json()) as { results?: { url?: string; thumbnail?: string }[] };
-    const hit = data.results?.[0];
-    return hit?.thumbnail || hit?.url || null;
-  } catch {
-    return null;
-  }
-}
-
-function syncImageForProduct(product: Product): string | null {
-  if (product.imageUrl) return product.imageUrl;
-  const asin = extractAsin(product.buyUrl);
-  if (asin) return amazonAsinImageUrl(asin);
-  return null;
+/** Secondary CDN — used as <img> onError fallback in the UI. */
+export function amazonAsinImageUrlFallback(asin: string, size: AsinImageSize = 300): string {
+  const clean = asin.trim().toUpperCase();
+  return `https://images-na.ssl-images-amazon.com/images/P/${clean}.01._SCLZZZZZZZ_SX${size}_.jpg`;
 }
 
 /**
- * Fill missing thumbnails: ASIN → Amazon image widget, else Openverse search by title.
- * Never throws — recommendations must still return if image lookup fails.
+ * Attach Amazon ASIN thumbnails from buyUrl for every product that has a live ASIN.
  */
-export async function enrichProductImages<T extends { product: Product }>(items: T[]): Promise<T[]> {
-  const out: T[] = [];
-  for (const item of items) {
-    const sync = syncImageForProduct(item.product);
-    if (sync) {
-      out.push({ ...item, product: { ...item.product, imageUrl: sync } });
-      continue;
+export function enrichProductImages<T extends { product: Product }>(items: T[]): T[] {
+  return items.map((item) => {
+    const asin = extractAsin(item.product.buyUrl) || extractAsin(item.product.imageUrl || "");
+    if (!asin) {
+      return { ...item, product: { ...item.product, imageUrl: null } };
     }
-    const remote = await openverseImage(`${item.product.title} ${item.product.category}`);
-    out.push({
+    return {
       ...item,
-      product: { ...item.product, imageUrl: remote },
-    });
-  }
-  return out;
+      product: {
+        ...item.product,
+        imageUrl: amazonAsinImageUrl(asin, 300),
+      },
+    };
+  });
 }

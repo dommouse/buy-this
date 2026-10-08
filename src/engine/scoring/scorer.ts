@@ -12,13 +12,18 @@ export function contentScore(f: ProfileFeatures, p: Product) {
   return { score, hits };
 }
 
-/** 1 inside the budget, decaying smoothly outside it. */
+/**
+ * Budget fit score.
+ * Over max → 0 (hard fail upstream). Under min is tolerated with a soft penalty.
+ */
 export function budgetScore(f: ProfileFeatures, p: Product) {
   if (!f.budget) return 0.6;
   const [lo, hi] = f.budget;
+  if (p.price > hi) return 0;
   if (p.price >= lo && p.price <= hi) return 1;
-  const gap = p.price > hi ? (p.price - hi) / hi : (lo - p.price) / Math.max(lo, 1);
-  return Math.max(0, 1 - gap * 2);
+  if (lo <= 0) return 1;
+  const gap = (lo - p.price) / Math.max(lo, 1);
+  return Math.max(0.35, 1 - gap);
 }
 
 /** Smoothed click-through rate, weighted by how much evidence exists. */
@@ -40,6 +45,15 @@ export function scoreProducts(
   return products
     .filter((p) => p.ageGroups.includes(f.ageGroup))
     .filter((p) => !f.avoidWords.some((w) => `${p.title} ${p.description} ${p.category}`.toLowerCase().includes(w)))
+    // Age is strict; budget max is strict; budget min is soft (see priceInBudget).
+    .filter((p) => {
+      if (!f.budget) return true;
+      const [, hi] = f.budget;
+      if (p.price > hi) return false;
+      const [lo] = f.budget;
+      if (lo <= 0) return true;
+      return p.price >= lo * 0.7;
+    })
     .map((product) => {
       const c = contentScore(f, product);
       const b = budgetScore(f, product);

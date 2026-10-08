@@ -4,55 +4,61 @@ const sample = JSON.stringify({
   tip: "Wrap it with a handwritten note.",
   gifts: [
     {
-      title: "Polaroid Camera Kit",
-      description: "Instant photos for creative friends.",
-      category: "Photography",
-      price: 89,
-      reason: "Matches their creative photo vibe.",
-      tags: ["Photography", "Creative"],
+      title: "Kindle Paperwhite",
+      description: "Glare-free e-reader for book lovers.",
+      category: "Books",
+      price: 139,
+      reason: "Matches their reading interest.",
+      tags: ["Reading", "Travel"],
       giftType: "physical",
-      searchQuery: "Polaroid camera kit",
+      asin: "B0CFPJYX7P",
+      searchQuery: "Kindle Paperwhite",
     },
     {
-      title: "Weekend Pottery Class",
+      title: "Local Pottery Class",
       description: "Hands-on creative experience.",
       category: "Experiences",
       price: 95,
       reason: "A memorable creative outing.",
       giftType: "experience",
-      searchQuery: "pottery class for two",
+      merchantUrl: "https://www.airbnb.com/experiences",
     },
     {
-      title: "Artist Sketch Set",
-      description: "Quality pencils and paper pad.",
-      category: "Art",
-      price: 42,
-      reason: "Practical for their art habit.",
+      title: "Echo Pop",
+      description: "Compact smart speaker.",
+      category: "Tech",
+      price: 39,
+      reason: "Practical tech for homebodies.",
+      tags: ["Tech/Gadgets", "Homebody"],
       giftType: "physical",
-      searchQuery: "artist sketch pencil set",
+      asin: "B09ZX86WB4",
     },
     {
-      title: "Neon Light Sign Kit",
-      description: "DIY LED word art.",
-      category: "Home",
-      price: 55,
-      reason: "Unexpected and fun for creatives.",
-      giftType: "physical",
-      searchQuery: "DIY neon light sign kit",
+      title: "Amazon Gift Card",
+      description: "Let them pick exactly what they want.",
+      category: "Gift Cards",
+      price: 50,
+      reason: "Flexible when interests are mixed.",
+      giftType: "giftcard",
+      asin: "B014WCGUVS",
     },
   ],
 });
 
 const parsed = parseClaudeGifts(sample, "adult", "test-session", 4);
-if (!parsed || parsed.items.length !== 4) {
-  console.error("FAIL: expected 4 gifts", parsed);
+if (!parsed || parsed.items.length < 3) {
+  console.error("FAIL: expected >=3 gifts", parsed);
   process.exit(1);
 }
-if (!parsed.items.every((i) => i.product.buyUrl.includes("amazon.com"))) {
-  console.error("FAIL: buy URLs", parsed.items.map((i) => i.product.buyUrl));
+const shop = parsed.items.filter((i) => i.product.giftType !== "experience");
+if (!shop.every((i) => /\/dp\//.test(i.product.buyUrl) && i.product.imageUrl)) {
+  console.error(
+    "FAIL: shop goods need PDP + image",
+    shop.map((i) => ({ title: i.product.title, buyUrl: i.product.buyUrl, imageUrl: i.product.imageUrl })),
+  );
   process.exit(1);
 }
 console.log(
   "OK",
-  parsed.items.map((i) => `${i.product.provider}: ${i.product.title}`),
+  parsed.items.map((i) => `${i.product.provider}:${i.product.giftType}:${i.product.title}`),
 );

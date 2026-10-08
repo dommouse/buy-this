@@ -11,9 +11,11 @@ results.tsx → getRecommendations (server fn)
         ↓
 recommend.server.ts
         ↓
-Claude invents 4 Amazon-findable gifts  (+ segment history insights)
+Claude invents Amazon gifts from questionnaire bounds (budget/interests/avoid)
         ↓
-Amazon Associates tag on BUY THIS URLs  (Skimlinks for non-Amazon when enabled)
+Validate live ASINs + hard budget filter + product-detail links only
+        ↓
+Amazon Associates tag on BUY THIS /dp/ASIN URLs (+ official ASIN images)
         ↓
 Upsert products + log recommendations
         ↓

@@ -3,6 +3,11 @@ import "./lib/error-capture";
 import { consumeLastCapturedError } from "./lib/error-capture";
 import { renderErrorPage } from "./lib/error-page";
 
+// Apply early so Anthropic/Amazon HTTPS work behind corporate SSL inspection.
+if (["1", "true", "yes", "on"].includes((process.env["ENGINE_TLS_INSECURE"] || "").toLowerCase())) {
+  process.env["NODE_TLS_REJECT_UNAUTHORIZED"] = "0";
+}
+
 type ServerEntry = {
   fetch: (request: Request, env: unknown, ctx: unknown) => Promise<Response> | Response;
 };
@@ -20,7 +25,7 @@ async function getServerEntry(): Promise<ServerEntry> {
 
 // h3 swallows in-handler throws into a normal 500 Response with body
 // {"unhandled":true,"message":"HTTPError"} — try/catch alone never fires for those.
-async function normalizeCatastrophicSsrResponse(response: Response): Promise<Response> {
+async function normalizeCatastrophicSsrResponse(response: Response, request: Request): Promise<Response> {
   if (response.status < 500) return response;
   const contentType = response.headers.get("content-type") ?? "";
   if (!contentType.includes("application/json")) return response;
@@ -28,7 +33,15 @@ async function normalizeCatastrophicSsrResponse(response: Response): Promise<Res
   const body = await response.clone().text();
   if (!isH3SwallowedErrorBody(body)) return response;
 
-  console.error(consumeLastCapturedError() ?? new Error(`h3 swallowed SSR error: ${body}`));
+  const captured = consumeLastCapturedError();
+  if (captured) {
+    console.error(`SSR failed for ${request.method} ${request.url}`, captured);
+  } else {
+    // Common on first hit while Vite is still re-optimizing deps — refresh usually works.
+    console.warn(
+      `SSR transient failure for ${request.method} ${request.url} (no captured stack — often Vite cold-start). Body: ${body}`,
+    );
+  }
   return new Response(renderErrorPage(), {
     status: 500,
     headers: { "content-type": "text/html; charset=utf-8" },
@@ -49,8 +62,13 @@ export default {
     try {
       const handler = await getServerEntry();
       const response = await handler.fetch(request, env, ctx);
-      return await normalizeCatastrophicSsrResponse(response);
+      return await normalizeCatastrophicSsrResponse(response, request);
     } catch (error) {
+      // Client disconnected while SSR/deps were still loading — ignore.
+      const msg = error instanceof Error ? error.message.toLowerCase() : "";
+      if (msg === "aborted" || msg.includes("aborted")) {
+        return new Response(null, { status: 499 });
+      }
       console.error(error);
       return new Response(renderErrorPage(), {
         status: 500,

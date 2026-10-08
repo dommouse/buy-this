@@ -16,6 +16,8 @@ const TEEN_AGES = ["13-15", "16-19"];
 export type ProfileFeatures = {
   budget: [number, number] | null;
   ageGroup: AgeGroup;
+  /** Exact questionnaire age label (e.g. "3-5", "30s") — used for Claude + filters. */
+  ageRange: string;
   giftType: GiftType | null;
   /** Lower-cased signals matched against product tags. */
   signals: string[];
@@ -34,6 +36,7 @@ export function extractProfileFeatures(p: RecipientProfile): ProfileFeatures {
   return {
     budget: BUDGETS[p.budget] ?? null,
     ageGroup,
+    ageRange: p.ageRange || "",
     giftType,
     signals,
     avoidWords,

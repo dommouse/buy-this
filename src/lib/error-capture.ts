@@ -49,11 +49,36 @@ function isErrorLike(value: unknown): value is Error {
   return value instanceof Error;
 }
 
+/** Browser/Vite cancelled the request mid-flight — noisy, not an app bug. */
+function isBenignAbort(error: unknown): boolean {
+  let current: unknown = error;
+  for (let depth = 0; depth < CAUSE_DEPTH_LIMIT && current != null; depth++) {
+    if (current instanceof Error) {
+      const msg = current.message.toLowerCase();
+      const code = (current as NodeJS.ErrnoException).code;
+      if (
+        msg === "aborted" ||
+        msg.includes("request aborted") ||
+        msg.includes("aborted by the client") ||
+        code === "ECONNRESET" ||
+        code === "ECONNABORTED"
+      ) {
+        return true;
+      }
+      current = current.cause;
+      continue;
+    }
+    break;
+  }
+  return false;
+}
+
 // Wrap console.error so errors logged by any layer — including h3's internal
 // unhandled-error logging, which this file cannot hook directly — are both
 // recorded for consumeLastCapturedError and expanded before serialization.
 const originalConsoleError = console.error.bind(console);
 console.error = (...args: unknown[]) => {
+  if (args.some((arg) => isBenignAbort(arg))) return;
   const expanded = args.map((arg) => {
     if (!isErrorLike(arg)) return arg;
     record(arg);
@@ -67,6 +92,16 @@ if (typeof globalThis.addEventListener === "function") {
   globalThis.addEventListener("unhandledrejection", (event) =>
     record((event as PromiseRejectionEvent).reason),
   );
+}
+
+// Node SSR (Vite/TanStack) — h3 often logs then swallows; keep the real Error for server.ts.
+if (typeof process !== "undefined" && typeof process.on === "function") {
+  process.on("uncaughtException", (error) => {
+    if (!isBenignAbort(error)) record(error);
+  });
+  process.on("unhandledRejection", (reason) => {
+    if (!isBenignAbort(reason)) record(reason);
+  });
 }
 
 export function consumeLastCapturedError(): unknown {

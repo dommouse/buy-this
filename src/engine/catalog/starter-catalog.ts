@@ -81,8 +81,8 @@ export const starterCatalog: Product[] = rows.map(([id, title, description, cate
   ageGroups,
   giftType,
   imageUrl: null,
-  // Plain Amazon search; Associates tag is applied at recommendation time via toBuyUrl/withAmazonTag.
-  buyUrl: `https://www.amazon.com/s?k=${encodeURIComponent(title)}`,
-  provider: "amazon",
+  // Search URLs are not valid BUY THIS targets — use amazon-catalog ASINs for shoppable fallbacks.
+  buyUrl: "",
+  provider: "starter",
   popularity: 0,
 }));

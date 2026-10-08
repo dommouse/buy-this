@@ -1,10 +1,14 @@
 import { createAnthropic } from "@ai-sdk/anthropic";
 import { generateText } from "ai";
 
-import { isAmazonUrl, merchantSearchUrl, toBuyUrl } from "../affiliates/links";
+import { amazonAsinUrl } from "../affiliates/amazon";
+import { isAmazonUrl, toBuyUrl } from "../affiliates/links";
+import { amazonAsinImageUrl, extractAsin } from "../catalog/product-images";
+import { isAmazonPdpUrl, validateRecommendations } from "../catalog/product-validator";
 import { engineConfig } from "../config";
-import type { AgeGroup, GiftType, Product, RecipientProfile, Recommendation } from "../types";
 import type { ProfileFeatures } from "../features/profile";
+import type { AgeGroup, GiftType, Product, RecipientProfile, Recommendation } from "../types";
+import { isTlsCertError, recoverFromTlsError } from "../utils/tls";
 
 export class AiUnavailableError extends Error {}
 
@@ -44,13 +48,110 @@ function slugify(title: string): string {
   return base || `gift-${crypto.randomUUID().slice(0, 8)}`;
 }
 
-function budgetHint(budget: string): string {
-  return budget ? `Stay within budget band: ${budget}.` : "Prefer thoughtful mid-range gifts.";
+function budgetBlock(features: ProfileFeatures, budgetLabel: string) {
+  if (!features.budget) {
+    return {
+      label: budgetLabel || "flexible",
+      minUsd: null,
+      maxUsd: null,
+      rule: "Prefer thoughtful mid-range gifts under $150 unless the recipient clearly warrants more.",
+    };
+  }
+  const [minUsd, maxUsd] = features.budget;
+  return {
+    label: budgetLabel,
+    minUsd,
+    maxUsd,
+    rule:
+      `HARD RULE — price MAX $${maxUsd}: every gift price MUST be <= $${maxUsd} USD (never over). ` +
+      `Price MIN $${minUsd} is soft: prefer staying near/above $${minUsd}, but a strong gift a bit under is OK. ` +
+      `Never suggest anything over $${maxUsd}.`,
+  };
+}
+
+function ageRule(features: ProfileFeatures, profile: { ageRange?: string; gender?: string }) {
+  const range = features.ageRange || profile.ageRange || features.ageGroup;
+  if (features.ageGroup === "child") {
+    return `HARD RULE — AGE: recipient is a CHILD (age ${range}). Only child-safe, age-appropriate toys/books/gear for that exact age. No alcohol, adult beauty, or teen/adult tech unless clearly for kids.`;
+  }
+  if (features.ageGroup === "teen") {
+    return `HARD RULE — AGE: recipient is a TEEN (age ${range}). Only teen-appropriate gifts. No toddler/infant products, no alcohol.`;
+  }
+  return `HARD RULE — AGE: recipient is an ADULT (age range: ${range || "adult"}). No infant/toddler toys unless the occasion is a baby shower.`;
+}
+
+function buildSystem(
+  count: number,
+  askExtra: number,
+  amazonPreferred: boolean,
+  budget: ReturnType<typeof budgetBlock>,
+  features: ProfileFeatures,
+  profile: { ageRange?: string; gender?: string },
+) {
+  const need = count + askExtra;
+  return (
+    "You are Dominique, gift brain for BUY THIS / Relationship Concierge. " +
+    "Your job is to recommend REAL, currently buyable products that match the questionnaire exactly. " +
+    `Return ${need} DISTINCT gift candidates (we will validate and keep the best ${count}). ` +
+    `${budget.rule} ` +
+    `${ageRule(features, profile)} ` +
+    "Match recipient relationship, occasion, gender (if given), vibe, interests, wants, gift-type preference, and NEVER violate avoid notes. " +
+    (amazonPreferred
+      ? "HARD RULE for physical products and gift cards: you MUST provide a real live Amazon.com ASIN (10 chars). " +
+        "BUY THIS opens ONLY amazon.com/dp/ASIN product pages — NEVER amazon.com/s? search pages. " +
+        "Only famous in-stock products whose ASIN you are certain still exists. If unsure of the ASIN, pick a different famous product. " +
+        "price must be a realistic current USD street price and MUST NOT exceed the budget max. " +
+        "Experiences may omit asin and use a non-Amazon merchantUrl only when they cannot be bought on Amazon. "
+      : "Provide a shoppable https merchantUrl for every gift. ") +
+    "Do not invent random image URLs. Leave imageUrl null — we attach Amazon images when ASIN is verified. " +
+    'Each reason MUST name a concrete questionnaire answer (interest, vibe, age, occasion, or relationship) — e.g. "Because they love Reading and this fits a birthday for ages 6-8." ' +
+    `Return ONLY JSON: {"tip":"max 30 words","gifts":[{"title":"...","description":"max 40 words","category":"...","price":number,"reason":"Because they… (max 28 words, cite their answers)","tags":["interest or vibe from questionnaire"],"giftType":"physical|experience|giftcard","asin":"B0XXXXXXXX","searchQuery":"brand + product","merchantUrl":null}]}.`
+  );
+}
+
+async function callClaudeOnce(system: string, prompt: string, signal: AbortSignal): Promise<string> {
+  const anthropic = createAnthropic({ apiKey: engineConfig.anthropicApiKey });
+  const result = await generateText({
+    model: anthropic(engineConfig.claudeModel),
+    system,
+    prompt,
+    maxRetries: 0,
+    abortSignal: signal,
+  });
+  return result.text;
+}
+
+async function callClaude(system: string, prompt: string): Promise<string> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), engineConfig.maxRecommendationMs);
+  try {
+    try {
+      return await callClaudeOnce(system, prompt, controller.signal);
+    } catch (err) {
+      // Corporate SSL MITM — auto-relax TLS once and retry so gift brain stays alive.
+      if (recoverFromTlsError(err) && !controller.signal.aborted) {
+        console.warn("engine: retrying Claude after TLS relaxation");
+        return await callClaudeOnce(system, prompt, controller.signal);
+      }
+      const status = (err as { statusCode?: number; status?: number }).statusCode ?? (err as { status?: number }).status;
+      if (status === 401 || status === 402 || status === 403 || status === 429) {
+        throw new AiUnavailableError(`Claude returned ${status}`);
+      }
+      if (isTlsCertError(err)) {
+        throw new AiUnavailableError(
+          "Claude TLS blocked (self-signed cert). Set ENGINE_TLS_INSECURE=true in local .env and restart.",
+        );
+      }
+      throw err;
+    }
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 /**
- * Ask Claude for a dynamic set of gift ideas (count from ENGINE_RECOMMENDATION_COUNT).
- * Slots (The One / Wow / Smart Pick / Wildcard) are assigned later by the ranker.
+ * Questionnaire → Claude gift brain → validated Amazon PDP gifts.
+ * Retries once if validation drops too many candidates.
  */
 export async function claudeSuggestGifts(input: {
   profile: RecipientProfile;
@@ -62,100 +163,105 @@ export async function claudeSuggestGifts(input: {
   if (!engineConfig.useAi || !apiKey) return null;
 
   const count = Math.min(24, Math.max(4, engineConfig.recommendationCount));
-  const anthropic = createAnthropic({ apiKey });
+  const amazonPreferred = engineConfig.amazon.enabled && !!engineConfig.amazon.partnerTag;
+  const budget = budgetBlock(input.features, input.profile.budget);
+  const askExtra = Math.min(8, Math.max(4, Math.ceil(count * 0.5)));
 
   const historyBlock =
     input.insights.length > 0
       ? {
-          note: "Historical winners for similar shoppers (prefer similar vibes when they still fit; do not copy blindly).",
+          note: "Historical winners for similar shoppers — prefer similar vibes only when they still fit budget + answers.",
           winners: input.insights.slice(0, 8).map((w) => ({
             id: w.productId,
             title: w.title,
             ctr: Number(w.ctr.toFixed(3)),
             clicks: w.clicks,
-            impressions: w.impressions,
           })),
         }
-      : { note: "Cold start — no historical click data yet. Rely on questionnaire fit." };
+      : { note: "Cold start — rely only on questionnaire fit." };
 
-  const amazonPreferred = engineConfig.amazon.enabled && !!engineConfig.amazon.partnerTag;
-  const system =
-    "You are Dominique, a warm witty gift concierge for BUY THIS / Relationship Concierge. " +
-    `Invent exactly ${count} REALISTIC, buyable, DISTINCT gift ideas (physical products, experiences, or gift cards). ` +
-    (amazonPreferred
-      ? "Prefer gifts that are easy to buy on Amazon.com (searchable product names, popular brands, Amazon gift cards). " +
-        "For physical products and gift cards, set searchQuery to a precise Amazon search phrase (brand + product type). " +
-        "When you know a real Amazon ASIN, include it in asin. " +
-        "Only use merchantUrl for non-Amazon experiences that truly cannot be fulfilled on Amazon. "
-      : "Propose shoppable gifts with a searchQuery or merchantUrl. ") +
-    "Respect age group, budget, interests, vibe, gift-type preference, and avoid notes. " +
-    "Include a direct https imageUrl when you know a public product image; otherwise null. " +
-    `Return ONLY JSON: {"tip":"max 30 words presentation tip","gifts":[{"title":"...","description":"max 40 words","category":"...","price":number,"reason":"max 25 words to the shopper","tags":["..."],"giftType":"physical|experience|giftcard","searchQuery":"...","merchantUrl":"optional https url","asin":"optional 10-char ASIN","imageUrl":null}]}. ` +
-    `Exactly ${count} different gifts, varied across interests and price points within budget.`;
-
-  const prompt = JSON.stringify({
-    recipient: input.profile,
+  const basePrompt = {
+    questionnaire: input.profile,
     derived: {
       ageGroup: input.features.ageGroup,
-      budgetRange: input.features.budget,
+      ageRange: input.features.ageRange || input.profile.ageRange,
+      budget,
       giftTypePreference: input.features.giftType,
       segment: input.features.segment,
-      signals: input.features.signals,
+      mustMatchSignals: input.features.signals,
       avoidWords: input.features.avoidWords,
     },
     shopping: {
-      primaryStore: amazonPreferred ? "amazon" : "open-web",
-      amazonPartnerTag: amazonPreferred ? engineConfig.amazon.partnerTag : null,
-      count,
-      note: amazonPreferred
-        ? "BUY THIS links will open Amazon with our Associates store ID. Optimize for Amazon-findable gifts."
-        : "BUY THIS links may use partner affiliate wrapping when configured.",
+      primaryStore: amazonPreferred ? "amazon.com" : "open-web",
+      associateTag: amazonPreferred ? engineConfig.amazon.partnerTag : null,
+      requireLiveAsinProductPage: true,
+      buyThisMustBeDpAsin: true,
+      neverUseAmazonSearchUrls: true,
+      neverInventAsins: true,
+      countNeeded: count,
+      candidatesRequested: count + askExtra,
     },
-    guidance: budgetHint(input.profile.budget),
     history: historyBlock,
-  });
+  };
 
-  let text: string;
-  try {
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), engineConfig.maxRecommendationMs);
-    try {
-      const result = await generateText({
-        model: anthropic(engineConfig.claudeModel),
-        system,
-        prompt,
-        maxRetries: 0,
-        abortSignal: controller.signal,
-      });
-      text = result.text;
-    } finally {
-      clearTimeout(timer);
+  const system = buildSystem(count, askExtra, amazonPreferred, budget, input.features, input.profile);
+  let text = await callClaude(system, JSON.stringify(basePrompt));
+  let parsed = parseClaudeGifts(text, input.features, input.sessionId, count + askExtra);
+  let validated = parsed ? await validateRecommendations(parsed.items, { features: input.features, sessionId: input.sessionId }) : [];
+
+  if (validated.length < Math.min(4, count)) {
+    console.warn(`engine: only ${validated.length} gifts passed validation — asking Claude for replacements`);
+    const rejectNote = {
+      ...basePrompt,
+      retry: true,
+      keepTitles: validated.map((v) => v.product.title),
+      instruction:
+        `Previous candidates failed live /dp/ASIN / age / budget-max checks. Return ${count + askExtra} NEW gifts. ` +
+        `Price MUST be <= $${budget.maxUsd ?? 150}. Age must match ${input.features.ageRange || input.features.ageGroup}. ` +
+        "Every physical/giftcard MUST include a different live Amazon ASIN (product page /dp/ only — no search URLs).",
+    };
+    text = await callClaude(system, JSON.stringify(rejectNote));
+    parsed = parseClaudeGifts(text, input.features, input.sessionId, count + askExtra);
+    const more = parsed ? await validateRecommendations(parsed.items, { features: input.features, sessionId: input.sessionId }) : [];
+    const seen = new Set(validated.map((v) => v.product.title.toLowerCase()));
+    for (const m of more) {
+      const k = m.product.title.toLowerCase();
+      if (seen.has(k)) continue;
+      seen.add(k);
+      validated.push(m);
     }
-  } catch (err) {
-    const status = (err as { statusCode?: number; status?: number }).statusCode ?? (err as { status?: number }).status;
-    if (status === 401 || status === 402 || status === 403 || status === 429) {
-      throw new AiUnavailableError(`Claude returned ${status}`);
-    }
-    throw err;
   }
 
-  return parseClaudeGifts(text, input.features.ageGroup, input.sessionId, count);
+  if (validated.length < Math.min(4, count)) {
+    console.warn("engine: Claude gift brain could not produce enough validated gifts");
+    return validated.length ? { tip: parsed?.tip ?? null, items: validated.slice(0, count) } : null;
+  }
+
+  return {
+    tip: parsed?.tip ?? null,
+    items: validated.slice(0, count),
+  };
 }
 
+/** Parse Claude JSON into draft recommendations (not yet ASIN-validated). */
 export function parseClaudeGifts(
   text: string,
-  ageGroup: AgeGroup,
+  featuresOrAge: ProfileFeatures | AgeGroup,
   sessionId: string | null,
   minCount = 4,
 ): ClaudeSuggestResult | null {
+  const ageGroup: AgeGroup = typeof featuresOrAge === "string" ? featuresOrAge : featuresOrAge.ageGroup;
+  const budgetMax =
+    typeof featuresOrAge === "string" ? null : featuresOrAge.budget ? featuresOrAge.budget[1] : null;
   const match = text.match(/\{[\s\S]*\}/);
   if (!match) return null;
   try {
     const raw = JSON.parse(match[0]) as { tip?: string; gifts?: ClaudeGift[] };
-    if (!Array.isArray(raw.gifts) || raw.gifts.length < Math.min(4, minCount)) return null;
+    if (!Array.isArray(raw.gifts) || raw.gifts.length < Math.min(2, minCount)) return null;
 
     const usedTitles = new Set<string>();
     const items: Recommendation[] = [];
+    const preferAmazon = engineConfig.amazon.enabled && !!engineConfig.amazon.partnerTag;
 
     for (const g of raw.gifts) {
       if (!g?.title) continue;
@@ -170,57 +276,54 @@ export function parseClaudeGifts(
       const price = Number(g.price);
       if (!Number.isFinite(price) || price < 0) continue;
 
-      const preferAmazon = engineConfig.amazon.enabled && !!engineConfig.amazon.partnerTag;
+      // Drop over-max prices early (min is soft — allow through for validator).
+      if (budgetMax != null && price > budgetMax) continue;
+
+      const asinRaw = typeof g.asin === "string" ? g.asin.trim().toUpperCase() : "";
+      const asin = /^[A-Z0-9]{10}$/.test(asinRaw) ? asinRaw : extractAsin(g.merchantUrl || "");
       const explicitMerchant =
         typeof g.merchantUrl === "string" && g.merchantUrl.startsWith("http") ? g.merchantUrl : null;
-      const asin = typeof g.asin === "string" && /^[A-Z0-9]{10}$/i.test(g.asin) ? g.asin.toUpperCase() : null;
-      const asinUrl = asin ? `https://www.amazon.com/dp/${asin}` : null;
 
-      const merchant =
-        asinUrl ||
-        (giftType === "experience" && explicitMerchant && !isAmazonUrl(explicitMerchant)
-          ? explicitMerchant
-          : preferAmazon || !explicitMerchant
-            ? merchantSearchUrl(g.searchQuery || g.title)
-            : explicitMerchant);
+      let merchant: string | null = null;
+      if (asin) {
+        merchant = amazonAsinUrl(asin);
+      } else if (giftType === "experience" && explicitMerchant && !isAmazonUrl(explicitMerchant)) {
+        merchant = explicitMerchant;
+      } else if (explicitMerchant && isAmazonPdpUrl(explicitMerchant)) {
+        merchant = explicitMerchant;
+      } else {
+        // Physical / gift cards without a /dp/ASIN are skipped — no Amazon search fallback.
+        continue;
+      }
 
       const buyUrl = toBuyUrl(merchant, { customId: sessionId });
-      const provider = isAmazonUrl(buyUrl) || preferAmazon ? "amazon" : "claude";
-      const imageUrl =
-        typeof g.imageUrl === "string" && g.imageUrl.startsWith("http")
-          ? g.imageUrl
-          : asin
-            ? `https://ws-na.amazon-adsystem.com/widgets/q?_encoding=UTF8&MarketPlace=US&ASIN=${asin}&ServiceVersion=20070822&ID=AsinImage&WS=1&Format=_SL300_`
-            : null;
-
+      const tags = Array.isArray(g.tags) ? g.tags.map(String).slice(0, 12) : [];
       const product: Product = {
-        id: `claude-${slugify(g.title)}`,
+        id: asin ? `amz-${asin.toLowerCase()}` : `claude-${slugify(g.title)}`,
         title: String(g.title).slice(0, 120),
         description: String(g.description ?? "").slice(0, 400),
         category: String(g.category || "Gift").slice(0, 80),
         price,
         currency: "USD",
-        tags: Array.isArray(g.tags) ? g.tags.map(String).slice(0, 12) : [],
+        tags,
         ageGroups: [ageGroup],
         giftType,
-        imageUrl,
+        imageUrl: asin ? amazonAsinImageUrl(asin, 300) : null,
         buyUrl,
-        provider,
+        provider: asin || preferAmazon ? "amazon" : "claude",
         popularity: 0,
       };
 
       items.push({
-        slot: "The One", // replaced by ranker after merge/sort
+        slot: "The One",
         rank: items.length + 1,
         product,
         score: Number(Math.max(0.4, 0.95 - items.length * 0.03).toFixed(4)),
-        reason: String(g.reason ?? "A strong match for them.").slice(0, 220),
+        reason: String(g.reason ?? "Because it matches their answers from the questionnaire.").slice(0, 220),
       });
-
-      if (items.length >= minCount) break;
     }
 
-    if (items.length < Math.min(4, minCount)) return null;
+    if (!items.length) return null;
     return {
       tip: typeof raw.tip === "string" ? raw.tip.slice(0, 260) : null,
       items,

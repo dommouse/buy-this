@@ -1,22 +1,33 @@
-import { withAmazonTag, amazonSearchUrl, isAmazonUrl } from "./amazon";
+import { withAmazonTag, isAmazonUrl, amazonAsinUrl } from "./amazon";
 import { toAffiliateUrl as toSkimlinksUrl } from "./skimlinks";
 import { engineConfig } from "../config";
+import { extractAsin } from "../catalog/product-images";
 
 export { amazonSearchUrl, amazonAsinUrl, isAmazonUrl, withAmazonTag } from "./amazon";
 export { toAffiliateUrl as toSkimlinksUrl } from "./skimlinks";
 
 /**
  * Final BUY THIS URL:
- * 1. Amazon URLs → Associates tag (store ID)
+ * 1. Amazon product /dp/ASIN → Associates tag (never /s? search pages)
  * 2. Other merchants → Skimlinks wrap when configured
  * 3. Otherwise original URL
- *
- * While Skimlinks is empty, Amazon-tagged links are the primary monetization path.
  */
 export function toBuyUrl(rawUrl: string, opts?: { customId?: string | null }): string {
   if (!rawUrl) return rawUrl;
 
-  if (isAmazonUrl(rawUrl) || (engineConfig.amazon.enabled && engineConfig.amazon.partnerTag && looksLikeAmazonSearch(rawUrl))) {
+  if (isAmazonUrl(rawUrl)) {
+    const asin = extractAsin(rawUrl);
+    // Normalize any Amazon product URL to a clean tagged /dp/ASIN — never keep /s? searches.
+    if (asin) return amazonAsinUrl(asin);
+    try {
+      const u = new URL(rawUrl);
+      if (u.pathname === "/s" || u.pathname.startsWith("/s/") || u.searchParams.has("k")) {
+        console.warn("engine: refusing Amazon search URL for BUY THIS", rawUrl.slice(0, 100));
+        return rawUrl; // caller/validator should drop; do not rewrite to another search
+      }
+    } catch {
+      /* keep */
+    }
     return withAmazonTag(rawUrl);
   }
 
@@ -25,33 +36,5 @@ export function toBuyUrl(rawUrl: string, opts?: { customId?: string | null }): s
     return toSkimlinksUrl(rawUrl, opts);
   }
 
-  // Prefer sending shoppers to Amazon search when we only have a loose query URL.
-  if (engineConfig.amazon.enabled && engineConfig.amazon.preferAmazonFallback) {
-    try {
-      const u = new URL(rawUrl);
-      if (u.hostname.includes("google.") && u.pathname.includes("/search")) {
-        const q = u.searchParams.get("q") || "gift";
-        return amazonSearchUrl(q);
-      }
-    } catch {
-      /* keep original */
-    }
-  }
-
   return rawUrl;
-}
-
-function looksLikeAmazonSearch(rawUrl: string): boolean {
-  try {
-    const u = new URL(rawUrl);
-    return /amazon\./i.test(u.hostname);
-  } catch {
-    return false;
-  }
-}
-
-/** Default shoppable link when Claude only returns a search query. */
-export function merchantSearchUrl(query: string): string {
-  if (engineConfig.amazon.enabled) return amazonSearchUrl(query);
-  return `https://www.amazon.com/s?k=${encodeURIComponent(query.trim() || "gift")}`;
 }

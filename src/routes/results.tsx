@@ -32,6 +32,7 @@ import {
   type Recommendation,
   type RecommendationResult,
 } from "@/engine";
+import { amazonAsinImageUrlFallback, extractAsin } from "@/engine/catalog/product-images";
 import { useGiftAnswers, type GiftAnswers } from "@/lib/gift-answers-context";
 
 export const Route = createFileRoute("/results")({
@@ -58,6 +59,18 @@ const slotMeta: Record<string, { emoji: string; subtitle: string; icon: LucideIc
 const defaultTip =
   "Pro tip from your Gift Brain: Wrap this in brown kraft paper with a pink ribbon for that perfect unboxing moment. Presentation is everything!";
 
+/** Live subtitles while Dominique / Claude search — keeps focus during long waits. */
+const THINKING_LINES = [
+  "Reading your answers like a gift detective…",
+  "Whispering with Claude about perfect matches…",
+  "Staying inside their budget — no sticker shock…",
+  "Hunting real Amazon product pages (not random searches)…",
+  "Checking interests, vibe, and what to avoid…",
+  "Ranking The One, The Wow, Smart Pick & Wildcard…",
+  "Comparing popular picks for similar shoppers…",
+  "Almost there — polishing your shortlist…",
+];
+
 function toProfile(answers: GiftAnswers) {
   return {
     relationship: answers.relationshipOther || answers.relationship || "",
@@ -82,6 +95,24 @@ function formatPrice(price: number, currency: string) {
   }
 }
 
+/** Clean engine reason for the card — no double "Picked because it…". */
+function formatCardReason(reason: string) {
+  const cleaned = reason
+    .replace(/^(picked because it\s+)+/i, "")
+    .replace(/^why this (fits|pick):\s*/i, "")
+    .trim();
+  if (!cleaned) return null;
+  if (/^(because|for their|perfect for|ideal for|great for|matches their)\b/i.test(cleaned)) {
+    return cleaned.endsWith(".") ? cleaned : `${cleaned}.`;
+  }
+  return (
+    <>
+      <span className="font-semibold text-foreground/70">Why this pick: </span>
+      {cleaned.endsWith(".") ? cleaned : `${cleaned}.`}
+    </>
+  );
+}
+
 function ResultsPage() {
   const { answers, setAnswers, searchId, setSearchId } = useGiftAnswers();
   const [emailOpen, setEmailOpen] = useState(false);
@@ -90,57 +121,88 @@ function ResultsPage() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [page, setPage] = useState(0);
+  const [statusIdx, setStatusIdx] = useState(0);
   const sessionIdRef = useRef(crypto.randomUUID());
   const bootstrappedRef = useRef(false);
   const trackedRef = useRef(false);
+  const searchIdRef = useRef(searchId);
+
+  useEffect(() => {
+    searchIdRef.current = searchId;
+  }, [searchId]);
+
+  // Rotate exciting status lines while the gift brain works.
+  useEffect(() => {
+    if (!loading) return;
+    setStatusIdx(0);
+    const id = window.setInterval(() => {
+      setStatusIdx((i) => (i + 1) % THINKING_LINES.length);
+    }, 2800);
+    return () => window.clearInterval(id);
+  }, [loading]);
+
+  const loadRecommendations = async (opts?: { force?: boolean }) => {
+    if (!answers) return;
+    if (loading && !opts?.force) return;
+    setLoading(true);
+    setError(null);
+    setResult(null);
+    trackedRef.current = false;
+
+    let nextSearchId = searchIdRef.current;
+    if (!nextSearchId) {
+      try {
+        nextSearchId = await createGiftSearch({
+          session_id: sessionIdRef.current,
+          recipient_relationship: answers.relationshipOther || answers.relationship || null,
+          recipient_age_range: answers.ageRange || null,
+          recipient_gender: answers.gender || null,
+          occasion: answers.occasionOther || answers.occasion || null,
+          interests: answers.interests.length ? answers.interests : null,
+          budget_range: answers.budget || null,
+          photo_url: null,
+          recommendations: null,
+        });
+        setSearchId(nextSearchId);
+        searchIdRef.current = nextSearchId;
+      } catch (err) {
+        console.error("BUY THIS: failed to save gift search", err);
+      }
+    }
+
+    try {
+      const data = await getRecommendations({
+        data: {
+          profile: toProfile(answers),
+          searchId: nextSearchId,
+          sessionId: sessionIdRef.current,
+        },
+      });
+      if (!data.items?.length) {
+        setError("Dominique couldn't lock a shortlist yet. Try again — she's still learning.");
+        setResult(data);
+        bootstrappedRef.current = false;
+      } else {
+        setResult(data);
+        setPage(0);
+        setError(null);
+      }
+    } catch (err) {
+      console.error("BUY THIS: recommendations failed", err);
+      setError("We couldn't load personalized picks right now. Try again in a moment.");
+      bootstrappedRef.current = false;
+    } finally {
+      setLoading(false);
+    }
+  };
 
   // Save the search, then ask the engine for picks (one bootstrap per visit).
   useEffect(() => {
     if (!answers || bootstrappedRef.current) return;
     bootstrappedRef.current = true;
-    setLoading(true);
-    setError(null);
-
-    (async () => {
-      let nextSearchId = searchId;
-      if (!nextSearchId) {
-        try {
-          nextSearchId = await createGiftSearch({
-            session_id: sessionIdRef.current,
-            recipient_relationship: answers.relationshipOther || answers.relationship || null,
-            recipient_age_range: answers.ageRange || null,
-            recipient_gender: answers.gender || null,
-            occasion: answers.occasionOther || answers.occasion || null,
-            interests: answers.interests.length ? answers.interests : null,
-            budget_range: answers.budget || null,
-            photo_url: null,
-            recommendations: null,
-          });
-          setSearchId(nextSearchId);
-        } catch (err) {
-          console.error("BUY THIS: failed to save gift search", err);
-        }
-      }
-
-      try {
-        const data = await getRecommendations({
-          data: {
-            profile: toProfile(answers),
-            searchId: nextSearchId,
-            sessionId: sessionIdRef.current,
-          },
-        });
-        setResult(data);
-        setPage(0);
-      } catch (err) {
-        console.error("BUY THIS: recommendations failed", err);
-        setError("We couldn't load personalized picks right now. Try Start Over.");
-        bootstrappedRef.current = false;
-      } finally {
-        setLoading(false);
-      }
-    })();
-  }, [answers, searchId, setSearchId]);
+    void loadRecommendations({ force: true });
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- bootstrap once per answers visit
+  }, [answers]);
 
   // Log impressions once for the returned set.
   useEffect(() => {
@@ -164,6 +226,7 @@ function ResultsPage() {
   const totalPages = Math.max(1, Math.ceil(items.length / pageSize));
   const safePage = Math.min(page, totalPages - 1);
   const pageItems = items.slice(safePage * pageSize, safePage * pageSize + pageSize);
+  const thinkingLine = THINKING_LINES[statusIdx] ?? THINKING_LINES[0]!;
 
   return (
     <main className="min-h-dvh bg-background px-4 pb-10 pt-20 text-foreground sm:px-6 sm:pt-24">
@@ -179,7 +242,12 @@ function ResultsPage() {
           <p className="mt-2 text-base text-muted-foreground sm:text-lg">
             Curated by Dominique, your Gift Brain <span className="sr-only">🦁</span>
           </p>
-          {items.length > 0 && !loading && !error && (
+          {loading && (
+            <p className="mt-3 min-h-6 text-sm font-medium text-primary transition-opacity duration-500 sm:text-base" aria-live="polite">
+              {thinkingLine}
+            </p>
+          )}
+          {items.length > 0 && !loading && (
             <p className="mt-2 text-sm text-muted-foreground">
               {items.length} gift{items.length === 1 ? "" : "s"} ranked by fit & popularity
               {totalPages > 1 ? ` · page ${safePage + 1} of ${totalPages}` : ""}
@@ -197,30 +265,65 @@ function ResultsPage() {
         )}
 
         {answers && loading && (
-          <div className="flex flex-col items-center gap-3 py-16 text-muted-foreground" role="status">
+          <div className="flex flex-col items-center gap-4 py-16 text-center text-muted-foreground" role="status">
             <Loader2 className="size-10 animate-spin text-primary" aria-hidden="true" />
-            <p className="font-medium">Dominique is picking your gifts…</p>
+            <p className="text-lg font-bold text-foreground">Dominique is picking your gifts…</p>
+            <p className="max-w-md text-sm leading-6 text-primary sm:text-base" aria-live="polite">
+              {thinkingLine}
+            </p>
+            <p className="max-w-sm text-xs text-muted-foreground">
+              Hang tight — she keeps searching until the best matches for your answers are ready.
+            </p>
           </div>
         )}
 
         {answers && error && !loading && (
           <div className="rounded-2xl border border-destructive/30 bg-card p-8 text-center">
             <p className="text-destructive">{error}</p>
-            <Button asChild variant="outline" className="mt-5 min-h-12 rounded-full border-primary font-bold text-primary">
-              <Link
-                to="/questionnaire"
+            <div className="mt-5 flex flex-wrap items-center justify-center gap-3">
+              <Button
+                type="button"
+                className="min-h-12 rounded-full font-bold"
                 onClick={() => {
-                  setAnswers(null);
-                  setSearchId(null);
+                  bootstrappedRef.current = true;
+                  void loadRecommendations({ force: true });
                 }}
               >
-                Start Over
-              </Link>
+                <Sparkles className="size-4" aria-hidden="true" />
+                Try again
+              </Button>
+              <Button asChild variant="outline" className="min-h-12 rounded-full border-primary font-bold text-primary">
+                <Link
+                  to="/questionnaire"
+                  onClick={() => {
+                    setAnswers(null);
+                    setSearchId(null);
+                  }}
+                >
+                  Start Over
+                </Link>
+              </Button>
+            </div>
+          </div>
+        )}
+
+        {answers && !loading && !error && items.length === 0 && (
+          <div className="rounded-2xl border border-border bg-card p-8 text-center">
+            <p className="text-muted-foreground">No gifts landed yet — Dominique can take another pass.</p>
+            <Button
+              type="button"
+              className="mt-5 min-h-12 rounded-full font-bold"
+              onClick={() => {
+                bootstrappedRef.current = true;
+                void loadRecommendations({ force: true });
+              }}
+            >
+              Keep searching
             </Button>
           </div>
         )}
 
-        {answers && !loading && !error && items.length > 0 && (
+        {answers && !loading && items.length > 0 && (
           <>
             <section className="grid gap-5 md:grid-cols-2" aria-label="Gift recommendations">
               {pageItems.map((item) => (
@@ -357,7 +460,13 @@ function GiftCard({
   const CategoryIcon = meta.icon;
   const { product } = item;
   const source = productSourceLabel(product.provider, product.buyUrl);
+  const [imgSrc, setImgSrc] = useState<string | null>(product.imageUrl);
   const [imgFailed, setImgFailed] = useState(false);
+
+  useEffect(() => {
+    setImgSrc(product.imageUrl);
+    setImgFailed(false);
+  }, [product.imageUrl, product.id]);
 
   const onBuy = () => {
     trackInteraction({
@@ -399,23 +508,44 @@ function GiftCard({
         </span>
       </div>
       <p className="mt-1 min-h-6 text-sm text-muted-foreground">{meta.subtitle}</p>
-      <div className="relative mx-auto my-5 grid aspect-square w-full max-w-52 place-items-center overflow-hidden rounded-xl bg-muted">
-        {product.imageUrl && !imgFailed ? (
+      <div className="relative mx-auto my-5 grid aspect-square w-full max-w-52 place-items-center overflow-hidden rounded-xl bg-muted/60 p-3">
+        {imgSrc && !imgFailed ? (
           <img
-            src={product.imageUrl}
+            src={imgSrc}
             alt={product.title}
-            className="size-full object-cover"
+            className="size-full object-contain"
             loading="lazy"
-            onError={() => setImgFailed(true)}
+            referrerPolicy="no-referrer"
+            onError={() => {
+              const asin = extractAsin(product.buyUrl) || extractAsin(product.imageUrl || "");
+              const fallback = asin ? amazonAsinImageUrlFallback(asin, 300) : null;
+              if (fallback && imgSrc !== fallback) {
+                setImgSrc(fallback);
+                return;
+              }
+              setImgFailed(true);
+            }}
           />
         ) : (
           <Gift className="size-16 text-primary/55" aria-hidden="true" />
         )}
       </div>
       <div className="flex flex-1 flex-col">
-        <h3 className="text-lg font-bold">{product.title}</h3>
-        <p className="mt-1 text-xl font-bold text-primary">{formatPrice(product.price, product.currency)}</p>
-        <p className="mt-2 flex-1 text-sm leading-6 text-muted-foreground">{item.reason || product.description}</p>
+        <h3 className="text-lg font-bold leading-snug">{product.title}</h3>
+        {product.category ? (
+          <p className="mt-1.5 text-xs font-semibold uppercase tracking-wide text-primary/80">{product.category}</p>
+        ) : null}
+        {product.description ? (
+          <p className="mt-2 text-sm leading-6 text-foreground/80">{product.description}</p>
+        ) : null}
+        <p className="mt-3 text-xl font-bold text-primary">{formatPrice(product.price, product.currency)}</p>
+        {item.reason ? (
+          <p className="mt-3 flex-1 border-t border-border/70 pt-3 text-sm leading-6 text-muted-foreground">
+            {formatCardReason(item.reason)}
+          </p>
+        ) : (
+          <div className="flex-1" />
+        )}
         <Button type="button" onClick={onBuy} className="mt-5 min-h-12 w-full rounded-full text-sm font-bold">
           BUY THIS <ShoppingCart className="size-4" aria-hidden="true" />
         </Button>

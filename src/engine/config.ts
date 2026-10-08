@@ -1,8 +1,11 @@
+import { applyEngineTlsRelaxation } from "./utils/tls";
+
 /**
  * Engine configuration.
  * Values come from process.env (server-only). Fallbacks keep local/dev usable.
  * Toggle flags let you disable AI without touching application routes.
  */
+
 function envBool(key: string, fallback: boolean) {
   const v = process.env[key];
   if (v == null || v === "") return fallback;
@@ -14,9 +17,18 @@ function envInt(key: string, fallback: number) {
   return Number.isFinite(n) ? n : fallback;
 }
 
+/** Local/corporate SSL inspection — see ENGINE_TLS_INSECURE in .env */
+applyEngineTlsRelaxation();
+
 export const engineConfig = {
   /** Master switch — when false, recommend() returns an empty safe result. */
   enabled: envBool("ENGINE_ENABLED", true),
+
+  /**
+   * When true, Node skips TLS peer verification (corporate MITM proxies).
+   * Local only — keep false on Lovable/production.
+   */
+  tlsInsecure: envBool("ENGINE_TLS_INSECURE", false),
 
   /**
    * Product source mode:
@@ -40,7 +52,7 @@ export const engineConfig = {
   lovableModel: process.env["ENGINE_LOVABLE_MODEL"] || "openai/gpt-6-astra",
   lovableGatewayUrl: process.env["ENGINE_LOVABLE_GATEWAY_URL"] || "https://ai.gateway.lovable.dev/v1",
 
-  featureVersion: process.env["ENGINE_FEATURE_VERSION"] || "f2",
+  featureVersion: process.env["ENGINE_FEATURE_VERSION"] || "f3",
   shortlistSize: envInt("ENGINE_SHORTLIST_SIZE", 12),
   weights: { content: 0.45, budget: 0.25, behavior: 0.2, popularity: 0.1 },
   behaviorConfidenceAt: envInt("ENGINE_BEHAVIOR_CONFIDENCE_AT", 50),
