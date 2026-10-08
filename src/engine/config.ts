@@ -1,4 +1,4 @@
-import { engineEnvDefaults } from "./env.config.js";
+import { engineEnvDefaults } from "./env.config";
 import { applyEngineTlsRelaxation } from "./utils/tls";
 
 /**
@@ -6,7 +6,7 @@ import { applyEngineTlsRelaxation } from "./utils/tls";
  *
  * Resolve order (same tag names as root `.env`):
  * 1. process.env / import.meta.env (local `.env` via Vite)
- * 2. `src/engine/env.config.js` (live / published — `.env` is not deployed)
+ * 2. `src/engine/env.config.ts` (live / published — `.env` is not deployed)
  */
 
 type EnvBag = Record<string, string | undefined>;
@@ -20,7 +20,7 @@ function runtimeEnv(): EnvBag {
   return { ...fromProcess, ...fromImportMeta };
 }
 
-/** process.env first; if missing/empty, same key from env.config.js. */
+/** process.env first; if missing/empty, same key from env.config.ts. */
 export function engineEnv(key: string, fallback = ""): string {
   const live = runtimeEnv()[key];
   if (live != null && String(live).trim() !== "") return String(live);
@@ -49,7 +49,7 @@ export const engineConfig = {
 
   /**
    * When true, Node skips TLS peer verification (corporate MITM proxies).
-   * Local only — keep false on Lovable/production (env.config.js default).
+   * Local only — keep false on Lovable/production (env.config.ts default).
    */
   tlsInsecure: envBool("ENGINE_TLS_INSECURE", false),
 

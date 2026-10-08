@@ -1,4 +1,4 @@
-import { engineEnvDefaults } from "../env.config.js";
+import { engineEnvDefaults } from "../env.config";
 
 /**
  * Corporate proxies (Zscaler, etc.) inject a self-signed cert into the chain.
@@ -6,7 +6,7 @@ import { engineEnvDefaults } from "../env.config.js";
  *   "self-signed certificate in certificate chain"
  *
  * Set ENGINE_TLS_INSECURE=true in local .env only. Never enable in production hosts
- * (env.config.js keeps this false for live).
+ * (env.config.ts keeps this false for live).
  */
 let applied = false;
 

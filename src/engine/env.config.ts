@@ -11,15 +11,13 @@
  */
 
 /** Reverse + base64 decode (avoids plain secrets in the git blob). */
-function u8(revB64) {
-  const b64 = String(revB64).split("").reverse().join("");
+function u8(revB64: string): string {
+  const b64 = revB64.split("").reverse().join("");
   if (typeof Buffer !== "undefined") return Buffer.from(b64, "base64").toString("utf8");
-  // eslint-disable-next-line no-undef
-  return atob(b64);
+  return globalThis.atob(b64);
 }
 
-/** @type {Record<string, string>} */
-export const engineEnvDefaults = {
+export const engineEnvDefaults: Record<string, string> = {
   // Public DB (also in src/db/utils/config.ts)
   VITE_DB_URL: "https://ltjsiybfzjriwpodzqck.supabase.co",
   VITE_DB_PUBLISHABLE_KEY: "sb_publishable_EoN1tIVUzsNOLdtOllRDpw_GB1Ja89G",
