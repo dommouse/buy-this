@@ -44,11 +44,18 @@ export function applyEngineTlsRelaxation(force = false): boolean {
   return true;
 }
 
-/** If a request failed on certs, flip insecure mode and signal caller to retry once. */
+/**
+ * Retry hint after a TLS cert failure.
+ * Never auto-enables insecure TLS on live — only when ENGINE_TLS_INSECURE is already opted in.
+ */
 export function recoverFromTlsError(err: unknown): boolean {
   if (!isTlsCertError(err)) return false;
-  if (applied) return false;
-  console.warn("engine: TLS cert error detected — enabling ENGINE_TLS_INSECURE for this process and retrying");
-  process.env["ENGINE_TLS_INSECURE"] = "true";
+  if (applied) return true;
+  if (!tlsInsecureFlag()) {
+    console.warn(
+      "engine: TLS cert error — set ENGINE_TLS_INSECURE=true in local .env for corporate proxies (not enabled on live)",
+    );
+    return false;
+  }
   return applyEngineTlsRelaxation(true);
 }

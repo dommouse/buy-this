@@ -89,12 +89,14 @@ export function classifySlot(s: ScoredProduct, index: number, all: ScoredProduct
     (index > 2 ? 0.15 : 0) +
     (1 - s.breakdown.content) * 0.3;
 
-  const ranked: { slot: Slot; score: number }[] = [
-    { slot: "The One", score: oneScore },
-    { slot: "The Wow", score: wowScore },
-    { slot: "The Smart Pick", score: smartScore },
-    { slot: "The Wildcard", score: wildScore },
-  ].sort((a, b) => b.score - a.score);
+  const ranked = (
+    [
+      { slot: "The One" as const, score: oneScore },
+      { slot: "The Wow" as const, score: wowScore },
+      { slot: "The Smart Pick" as const, score: smartScore },
+      { slot: "The Wildcard" as const, score: wildScore },
+    ] satisfies { slot: Slot; score: number }[]
+  ).sort((a, b) => b.score - a.score);
 
   // Light rotation so a long list does not stamp every card as "The One".
   const rotate = index % SLOTS.length;

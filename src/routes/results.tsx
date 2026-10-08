@@ -394,7 +394,7 @@ function ResultsPage() {
                   setEmailOpen(true);
                   trackInteraction({
                     type: "email_picks",
-                    recommendationId: result?.recommendationId,
+                    recommendationId: result?.recommendationId ?? null,
                     searchId,
                     sessionId: sessionIdRef.current,
                   });
