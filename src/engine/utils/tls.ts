@@ -1,11 +1,23 @@
+import { engineEnvDefaults } from "../env.config.js";
+
 /**
  * Corporate proxies (Zscaler, etc.) inject a self-signed cert into the chain.
  * Node then rejects Anthropic + Amazon HTTPS with:
  *   "self-signed certificate in certificate chain"
  *
- * Set ENGINE_TLS_INSECURE=true in local .env only. Never enable in production hosts.
+ * Set ENGINE_TLS_INSECURE=true in local .env only. Never enable in production hosts
+ * (env.config.js keeps this false for live).
  */
 let applied = false;
+
+function tlsInsecureFlag(): boolean {
+  const fromEnv = process.env["ENGINE_TLS_INSECURE"];
+  const raw =
+    fromEnv != null && String(fromEnv).trim() !== ""
+      ? String(fromEnv)
+      : engineEnvDefaults["ENGINE_TLS_INSECURE"] || "false";
+  return ["1", "true", "yes", "on"].includes(raw.toLowerCase());
+}
 
 export function isTlsCertError(err: unknown): boolean {
   const msg = String((err as { message?: string; cause?: unknown })?.message ?? err ?? "");
@@ -22,7 +34,7 @@ export function isTlsCertError(err: unknown): boolean {
 
 /** Apply once per process when ENGINE_TLS_INSECURE is on. */
 export function applyEngineTlsRelaxation(force = false): boolean {
-  const flag = force || ["1", "true", "yes", "on"].includes((process.env["ENGINE_TLS_INSECURE"] || "").toLowerCase());
+  const flag = force || tlsInsecureFlag();
   if (!flag || applied) return applied && flag;
   process.env["NODE_TLS_REJECT_UNAUTHORIZED"] = "0";
   applied = true;

@@ -3,9 +3,12 @@ import "./lib/error-capture";
 import { consumeLastCapturedError } from "./lib/error-capture";
 import { renderErrorPage } from "./lib/error-page";
 
-// Apply early so Anthropic/Amazon HTTPS work behind corporate SSL inspection.
-if (["1", "true", "yes", "on"].includes((process.env["ENGINE_TLS_INSECURE"] || "").toLowerCase())) {
-  process.env["NODE_TLS_REJECT_UNAUTHORIZED"] = "0";
+// Apply early so Anthropic/Amazon HTTPS work behind corporate SSL inspection (local .env only).
+{
+  const tls = (process.env["ENGINE_TLS_INSECURE"] || "").toLowerCase();
+  if (["1", "true", "yes", "on"].includes(tls)) {
+    process.env["NODE_TLS_REJECT_UNAUTHORIZED"] = "0";
+  }
 }
 
 type ServerEntry = {

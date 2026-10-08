@@ -12,3 +12,4 @@
 - Questionnaire choices render bundled local SVG emoji artwork for consistent, playful icons across platforms.
 - Database access goes through src/db (typed client, schema types, repositories); schema changes are numbered SQL files in src/db/migrations applied by `bun run db:migrate`, so the database never needs manual imports.
 - Database settings come from root .env (VITE_* for browser, DB_*/DATABASE_URL server-only) with fallbacks in src/db/utils/config.ts, because .env is not deployed with the published site.
+- Engine settings come from root .env locally; on the published site the same keys fall back to src/engine/env.config.js (via src/engine/config.ts).
