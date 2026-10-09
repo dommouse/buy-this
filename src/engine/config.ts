@@ -40,6 +40,85 @@ function envInt(key: string, fallback: number) {
   return Number.isFinite(n) ? n : fallback;
 }
 
+/**
+ * Common / lazy gift categories we never recommend.
+ * Edit this list (or ENGINE_AVOID_CATEGORIES=candle,perfume,...) to expand.
+ * Each entry is matched against search phrases AND product title/category/tags.
+ */
+export type AvoidCategory = {
+  id: string;
+  /** Display label for prompts / logs. */
+  label: string;
+  /** Lowercase terms — multi-word phrases preferred for precision. */
+  terms: string[];
+};
+
+const DEFAULT_AVOID_CATEGORIES: AvoidCategory[] = [
+  {
+    id: "candles",
+    label: "candles",
+    terms: ["candle", "candles", "scented candle", "candle set", "candle gift"],
+  },
+  {
+    id: "perfume",
+    label: "perfume / cologne",
+    terms: [
+      "perfume",
+      "cologne",
+      "fragrance set",
+      "eau de parfum",
+      "eau de toilette",
+      "body mist perfume",
+    ],
+  },
+  {
+    id: "throw-blankets",
+    label: "throw blankets",
+    terms: [
+      "throw blanket",
+      "throw blankets",
+      "fleece throw",
+      "knit throw",
+      "sherpa throw",
+      "throw for couch",
+    ],
+  },
+  {
+    id: "wallets",
+    label: "wallets",
+    terms: ["wallet", "wallets", "bifold wallet", "cardholder wallet", "card holder wallet", "money clip wallet"],
+  },
+];
+
+function parseAvoidCategories(): AvoidCategory[] {
+  const raw = engineEnv("ENGINE_AVOID_CATEGORIES", "").trim();
+  if (!raw) return DEFAULT_AVOID_CATEGORIES;
+  // Comma-separated ids from the default list, e.g. candles,perfume,wallets
+  const wanted = new Set(
+    raw
+      .toLowerCase()
+      .split(/[,|]+/)
+      .map((s) => s.trim())
+      .filter(Boolean),
+  );
+  const matched = DEFAULT_AVOID_CATEGORIES.filter((c) => wanted.has(c.id) || wanted.has(c.label));
+  return matched.length ? matched : DEFAULT_AVOID_CATEGORIES;
+}
+
+/** True when text hits a configured avoid-category term. */
+export function matchesAvoidCategory(text: string, categories = engineConfig.avoidCategories): AvoidCategory | null {
+  const blob = ` ${text.toLowerCase().replace(/[^a-z0-9\s]/g, " ").replace(/\s+/g, " ").trim()} `;
+  for (const cat of categories) {
+    for (const term of cat.terms) {
+      const t = term.toLowerCase().trim();
+      if (!t) continue;
+      if (blob.includes(` ${t} `) || blob.includes(` ${t}`)) return cat;
+      if (t.includes(" ") && blob.includes(t)) return cat;
+    }
+  }
+  return null;
+}
+
 /** Local/corporate SSL inspection — see ENGINE_TLS_INSECURE */
 applyEngineTlsRelaxation();
 
@@ -55,10 +134,14 @@ export const engineConfig = {
 
   /**
    * Product source mode:
-   * - claude-suggest: Claude invents gift ideas (no catalog). Primary for this project.
-   * - catalog-hybrid: score DB/starter catalog then optional AI re-rank (legacy fallback path).
+   * - keyword-search: phrases → blocklist → store search → pick 4 slots (primary).
+   * - claude-suggest: Claude invents gifts directly (legacy).
+   * - catalog-hybrid: score curated catalog, optional Lovable re-rank (legacy).
    */
-  mode: (engineEnv("ENGINE_MODE", "claude-suggest") || "claude-suggest") as "claude-suggest" | "catalog-hybrid",
+  mode: (engineEnv("ENGINE_MODE", "keyword-search") || "keyword-search") as
+    | "keyword-search"
+    | "claude-suggest"
+    | "catalog-hybrid",
 
   /** Claude / Anthropic */
   useAi: envBool("ENGINE_USE_AI", true),
@@ -79,6 +162,12 @@ export const engineConfig = {
   shortlistSize: envInt("ENGINE_SHORTLIST_SIZE", 12),
   weights: { content: 0.45, budget: 0.25, behavior: 0.2, popularity: 0.1 },
   behaviorConfidenceAt: envInt("ENGINE_BEHAVIOR_CONFIDENCE_AT", 50),
+
+  /**
+   * Gift categories never suggested (too common / lazy defaults).
+   * Source: DEFAULT_AVOID_CATEGORIES above, optional ENGINE_AVOID_CATEGORIES filter.
+   */
+  avoidCategories: parseAvoidCategories(),
 
   /** Background training via DB RPC. */
   trainingEnabled: envBool("ENGINE_TRAINING_ENABLED", true),

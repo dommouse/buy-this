@@ -1,4 +1,5 @@
 import { engineEnvDefaults } from "../env.config";
+import { engineWarn } from "./logger";
 
 /**
  * Corporate proxies (Zscaler, etc.) inject a self-signed cert into the chain.
@@ -38,7 +39,7 @@ export function applyEngineTlsRelaxation(force = false): boolean {
   if (!flag || applied) return applied && flag;
   process.env["NODE_TLS_REJECT_UNAUTHORIZED"] = "0";
   applied = true;
-  console.warn(
+  engineWarn(
     "engine: TLS verification relaxed (ENGINE_TLS_INSECURE) — local/corporate proxy only",
   );
   return true;
@@ -52,7 +53,7 @@ export function recoverFromTlsError(err: unknown): boolean {
   if (!isTlsCertError(err)) return false;
   if (applied) return true;
   if (!tlsInsecureFlag()) {
-    console.warn(
+    engineWarn(
       "engine: TLS cert error — set ENGINE_TLS_INSECURE=true in local .env for corporate proxies (not enabled on live)",
     );
     return false;

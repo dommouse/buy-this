@@ -1,4 +1,5 @@
 import type { AgeGroup, GiftType, RecipientProfile } from "../types";
+import { normalizeGender, type GenderFit } from "./fit";
 
 const BUDGETS: Record<string, [number, number]> = {
   "Under $25": [0, 25],
@@ -18,6 +19,8 @@ export type ProfileFeatures = {
   ageGroup: AgeGroup;
   /** Exact questionnaire age label (e.g. "3-5", "30s") — used for Claude + filters. */
   ageRange: string;
+  /** Normalized gender from questionnaire when answered. */
+  gender: GenderFit;
   giftType: GiftType | null;
   /** Lower-cased signals matched against product tags. */
   signals: string[];
@@ -31,20 +34,24 @@ export function extractProfileFeatures(p: RecipientProfile): ProfileFeatures {
   const giftType: GiftType | null =
     p.giftType === "An Experience" ? "experience" : p.giftType === "A Gift Card or Cash" ? "giftcard" : p.giftType === "Something to Unwrap" ? "physical" : null;
   const interests = p.interests.filter((i) => !i.startsWith("I don't really know"));
-  const signals = [...interests, p.vibe, p.relationship, p.occasion].filter(Boolean).map((s) => s.toLowerCase());
+  const gender = normalizeGender(p.gender);
+  const signals = [...interests, p.vibe, p.relationship, p.occasion, gender !== "unspecified" ? gender : ""]
+    .filter(Boolean)
+    .map((s) => s.toLowerCase());
   const avoidWords = p.avoid.toLowerCase().split(/[^a-z]+/).filter((w) => w.length > 3);
   return {
     budget: BUDGETS[p.budget] ?? null,
     ageGroup,
     ageRange: p.ageRange || "",
+    gender,
     giftType,
     signals,
     avoidWords,
     // Coarse segment the training job learns click rates for.
-    segment: segmentKey(p.relationship, p.occasion, ageGroup),
+    segment: segmentKey(p.relationship, p.occasion, ageGroup, gender),
   };
 }
 
-export function segmentKey(relationship: string, occasion: string, ageGroup: string) {
-  return [relationship || "any", occasion || "any", ageGroup].join("|").toLowerCase();
+export function segmentKey(relationship: string, occasion: string, ageGroup: string, gender: string = "unspecified") {
+  return [relationship || "any", occasion || "any", ageGroup, gender || "unspecified"].join("|").toLowerCase();
 }

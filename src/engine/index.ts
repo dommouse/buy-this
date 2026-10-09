@@ -3,5 +3,6 @@
 export { getRecommendations } from "./recommend.functions";
 export { trackInteraction } from "./tracking";
 export { productSourceLabel } from "./source-label";
-export type { Recommendation, RecommendationResult, RecipientProfile, Product } from "./types";
+export { printEngineLogsToConsole } from "./browser-logs";
+export type { Recommendation, RecommendationResult, RecipientProfile, Product, EngineLogEntry } from "./types";
 export type { InteractionType } from "./tracking";

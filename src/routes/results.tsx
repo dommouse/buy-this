@@ -27,6 +27,7 @@ import { createEmailCapture } from "@/db/repositories/email-captures";
 import { createGiftSearch } from "@/db/repositories/gift-searches";
 import {
   getRecommendations,
+  printEngineLogsToConsole,
   productSourceLabel,
   trackInteraction,
   type Recommendation,
@@ -59,16 +60,16 @@ const slotMeta: Record<string, { emoji: string; subtitle: string; icon: LucideIc
 const defaultTip =
   "Pro tip from your Gift Brain: Wrap this in brown kraft paper with a pink ribbon for that perfect unboxing moment. Presentation is everything!";
 
-/** Live subtitles while Dominique / Claude search — keeps focus during long waits. */
+/** Live subtitles while Dominique builds phrases + searches — keeps focus during long waits. */
 const THINKING_LINES = [
   "Reading your answers like a gift detective…",
-  "Whispering with Claude about perfect matches…",
+  "Building smart search phrases for each gift slot…",
+  "Checking the block list — no lazy mug-or-socks gifts…",
+  "Pivoting any blocked angles into fresher ideas…",
+  "Searching real product catalogs (Amazon first)…",
   "Staying inside their budget — no sticker shock…",
-  "Hunting real Amazon product pages (not random searches)…",
-  "Checking interests, vibe, and what to avoid…",
-  "Ranking The One, The Wow, Smart Pick & Wildcard…",
-  "Comparing popular picks for similar shoppers…",
-  "Almost there — polishing your shortlist…",
+  "Picking The One, The Wow, Smart Pick & Wildcard…",
+  "Writing a short tip on how to present the gift…",
 ];
 
 function toProfile(answers: GiftAnswers) {
@@ -178,6 +179,12 @@ function ResultsPage() {
           sessionId: sessionIdRef.current,
         },
       });
+      // Mirror server engine logs into the browser console (Inspect → Console on production).
+      printEngineLogsToConsole(data.engineLogs, {
+        strategy: data.strategy,
+        modelVersion: data.modelVersion,
+      });
+
       if (!data.items?.length) {
         setError("Dominique couldn't lock a shortlist yet. Try again — she's still learning.");
         setResult(data);

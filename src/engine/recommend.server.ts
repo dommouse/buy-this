@@ -20,23 +20,45 @@ import {
   upsertSuggestedProducts,
 } from "./data/engine-repository";
 import { extractProfileFeatures } from "./features/profile";
+import { AiUnavailableError as KeywordAiUnavailableError, keywordSearchRecommend } from "./keyword-recommend.server";
 import { assignSlotsToAll } from "./scoring/ranker";
 import { scoreProducts } from "./scoring/scorer";
 import type { Recommendation, RecipientProfile, RecommendationResult, ScoredProduct } from "./types";
+import { engineError, engineLog, engineWarn, takeEngineLogs, withEngineLogs } from "./utils/logger";
 
 let aiPausedUntil = 0;
 
 /**
- * Questionnaire → Claude gift brain → validated Amazon gifts.
- * Never returns an empty list when any budget-fitting catalog gifts exist.
+ * Questionnaire → keyword phrases → blocklist → store search → 4 slot picks.
+ * Falls back to Claude invent / catalog scoring if the keyword path fails.
+ * All engineLog* calls during this run are returned as engineLogs for the browser console.
  */
 export async function recommend(
   profile: RecipientProfile,
   ctx: { searchId: string | null; sessionId: string | null },
 ): Promise<RecommendationResult> {
+  const { value, logs } = await withEngineLogs(() => recommendInner(profile, ctx));
+  return { ...value, engineLogs: logs };
+}
+
+async function recommendInner(
+  profile: RecipientProfile,
+  ctx: { searchId: string | null; sessionId: string | null },
+): Promise<RecommendationResult> {
   if (!engineConfig.enabled) {
+    engineWarn("engine: disabled — returning empty result");
     return emptyResult("disabled", "scoring");
   }
+
+  engineLog(
+    "engine: recommend start",
+    `mode=${engineConfig.mode}`,
+    `relationship=${profile.relationship || "—"}`,
+    `occasion=${profile.occasion || "—"}`,
+    `age=${profile.ageRange || "—"}`,
+    `gender=${profile.gender || "—"}`,
+    `budget=${profile.budget || "—"}`,
+  );
 
   const features = extractProfileFeatures(profile);
   const version = await activeModelVersion();
@@ -49,6 +71,42 @@ export async function recommend(
     loadSegmentInsights(features.segment),
   ]);
   const catalogScored = scoreProducts(features, products, stats);
+
+  const useKeyword =
+    (engineConfig.mode === "keyword-search" || engineConfig.mode === "claude-suggest") &&
+    Date.now() > aiPausedUntil;
+
+  if (useKeyword && engineConfig.mode === "keyword-search") {
+    try {
+      const keyed = await keywordSearchRecommend({
+        profile,
+        features,
+        sessionId: ctx.sessionId,
+      });
+      if (keyed?.items.length) {
+        let items = keyed.items;
+        if (items.length < 4) {
+          items = await ensureNonEmpty(items, catalogScored, features, 4, ctx.sessionId);
+        }
+        await upsertSuggestedProducts(items);
+        engineLog(`engine: keyword-search ok — ${items.length} gifts`);
+        return finalize(items, {
+          recommendationId: crypto.randomUUID(),
+          modelVersion,
+          strategy: "keyword-search",
+          tip: keyed.tip,
+          segment: features.segment,
+          searchId: ctx.searchId,
+          sessionId: ctx.sessionId,
+          breakdowns: breakdownMap(items, catalogScored),
+        });
+      }
+      engineWarn("engine: keyword-search returned no gifts, falling back");
+    } catch (err) {
+      if (err instanceof KeywordAiUnavailableError) aiPausedUntil = Date.now() + 30 * 60_000;
+      engineError("engine: keyword-search failed, falling back", err);
+    }
+  }
 
   if (engineConfig.mode === "claude-suggest" && Date.now() > aiPausedUntil) {
     try {
@@ -63,6 +121,7 @@ export async function recommend(
         merged = await ensureNonEmpty(merged, catalogScored, features, limit, ctx.sessionId);
         const withImages = enrichProductImages(merged);
         await upsertSuggestedProducts(withImages);
+        engineLog(`engine: claude-suggest ok — ${withImages.length} gifts`);
         return finalize(withImages, {
           recommendationId: crypto.randomUUID(),
           modelVersion,
@@ -74,10 +133,10 @@ export async function recommend(
           breakdowns: breakdownMap(merged, catalogScored),
         });
       }
-      console.warn("engine: Claude returned no usable gifts, falling back to scoring");
+      engineWarn("engine: Claude returned no usable gifts, falling back to scoring");
     } catch (err) {
       if (err instanceof ClaudeUnavailableError) aiPausedUntil = Date.now() + 30 * 60_000;
-      console.error("engine: Claude suggest failed, falling back to scoring", err);
+      engineError("engine: Claude suggest failed, falling back to scoring", err);
     }
   }
 
@@ -92,7 +151,7 @@ async function ensureNonEmpty(
   sessionId: string | null,
 ): Promise<Recommendation[]> {
   if (items.length >= Math.min(4, limit)) return items.slice(0, limit);
-  console.warn(`engine: only ${items.length} gifts — filling from emergency catalog`);
+  engineWarn(`engine: only ${items.length} gifts — filling from emergency catalog`);
   const fillerDraft = emergencyGiftList(catalogScored, features, limit * 2);
   const filler = await validateRecommendations(fillerDraft, { features, sessionId });
   const seen = new Set(items.map((i) => i.product.title.toLowerCase()));
@@ -247,7 +306,7 @@ async function catalogHybrid(
       }
     } catch (err) {
       if (err instanceof LovableUnavailableError) aiPausedUntil = Date.now() + 30 * 60_000;
-      console.error("engine: AI re-rank failed, using scoring only", err);
+      engineError("engine: AI re-rank failed, using scoring only", err);
     }
   }
 
@@ -303,16 +362,21 @@ async function finalize(
   const safeItems = items.filter((i) => {
     const url = i.product.buyUrl;
     if (isAmazonSearchUrl(url)) {
-      console.warn("engine: stripping search URL from final results", i.product.title);
+      engineWarn("engine: stripping search URL from final results", i.product.title);
       return false;
     }
     const shop = i.product.giftType === "physical" || i.product.giftType === "giftcard";
     if (shop && !isAmazonPdpUrl(url)) {
-      console.warn("engine: stripping non-PDP shop gift", i.product.title);
+      engineWarn("engine: stripping non-PDP shop gift", i.product.title);
       return false;
     }
     return true;
   });
+
+  engineLog(
+    `engine: finalize strategy=${meta.strategy} gifts=${safeItems.length}`,
+    safeItems.map((i) => `${i.slot}:${i.product.title}`).join(" | "),
+  );
 
   return {
     recommendationId: meta.recommendationId,
@@ -322,6 +386,8 @@ async function finalize(
     items: safeItems,
     total: safeItems.length,
     pageSize: engineConfig.pageSize,
+    // Outer recommend() overwrites with the full buffer; keep a snapshot here too.
+    engineLogs: takeEngineLogs().slice(),
   };
 }
 
@@ -334,5 +400,6 @@ function emptyResult(modelVersion: string, strategy: RecommendationResult["strat
     items: [],
     total: 0,
     pageSize: engineConfig.pageSize,
+    engineLogs: takeEngineLogs().slice(),
   };
 }

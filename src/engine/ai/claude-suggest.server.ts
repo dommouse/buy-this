@@ -8,6 +8,7 @@ import { isAmazonPdpUrl, validateRecommendations } from "../catalog/product-vali
 import { engineConfig } from "../config";
 import type { ProfileFeatures } from "../features/profile";
 import type { AgeGroup, GiftType, Product, RecipientProfile, Recommendation } from "../types";
+import { engineWarn } from "../utils/logger";
 import { isTlsCertError, recoverFromTlsError } from "../utils/tls";
 
 export class AiUnavailableError extends Error {}
@@ -80,6 +81,20 @@ function ageRule(features: ProfileFeatures, profile: { ageRange?: string; gender
   return `HARD RULE — AGE: recipient is an ADULT (age range: ${range || "adult"}). No infant/toddler toys unless the occasion is a baby shower.`;
 }
 
+function genderRule(features: ProfileFeatures, profile: { gender?: string }) {
+  const g = (features.gender || profile.gender || "").toLowerCase();
+  if (!g || g === "unspecified" || /prefer|rather|skip|non.?binary/.test(g)) {
+    return "GENDER: not specified — prefer unisex / gender-neutral gifts.";
+  }
+  if (/woman|women|female|girl/.test(g) || features.gender === "woman") {
+    return "HARD RULE — GENDER: recipient is a woman. Prefer gifts suitable for women. Do NOT return men-only products.";
+  }
+  if (/man|men|male|boy/.test(g) || features.gender === "man") {
+    return "HARD RULE — GENDER: recipient is a man. Prefer gifts suitable for men. Do NOT return women-only products.";
+  }
+  return "GENDER: prefer unisex / gender-neutral gifts.";
+}
+
 function buildSystem(
   count: number,
   askExtra: number,
@@ -95,7 +110,10 @@ function buildSystem(
     `Return ${need} DISTINCT gift candidates (we will validate and keep the best ${count}). ` +
     `${budget.rule} ` +
     `${ageRule(features, profile)} ` +
-    "Match recipient relationship, occasion, gender (if given), vibe, interests, wants, gift-type preference, and NEVER violate avoid notes. " +
+    `${genderRule(features, profile)} ` +
+    "Match recipient relationship, occasion, vibe, interests, wants, gift-type preference, and NEVER violate avoid notes. " +
+    `NEVER suggest these avoided categories: ${engineConfig.avoidCategories.map((c) => c.label).join(", ")}. ` +
+    "CRITICAL: all gifts must be DIFFERENT products — never repeat the same gift across the list. " +
     (amazonPreferred
       ? "HARD RULE for physical products and gift cards: you MUST provide a real live Amazon.com ASIN (10 chars). " +
         "BUY THIS opens ONLY amazon.com/dp/ASIN product pages — NEVER amazon.com/s? search pages. " +
@@ -130,7 +148,7 @@ async function callClaude(system: string, prompt: string): Promise<string> {
     } catch (err) {
       // Corporate SSL MITM — auto-relax TLS once and retry so gift brain stays alive.
       if (recoverFromTlsError(err) && !controller.signal.aborted) {
-        console.warn("engine: retrying Claude after TLS relaxation");
+        engineWarn("engine: retrying Claude after TLS relaxation");
         return await callClaudeOnce(system, prompt, controller.signal);
       }
       const status = (err as { statusCode?: number; status?: number }).statusCode ?? (err as { status?: number }).status;
@@ -210,7 +228,7 @@ export async function claudeSuggestGifts(input: {
   let validated = parsed ? await validateRecommendations(parsed.items, { features: input.features, sessionId: input.sessionId }) : [];
 
   if (validated.length < Math.min(4, count)) {
-    console.warn(`engine: only ${validated.length} gifts passed validation — asking Claude for replacements`);
+    engineWarn(`engine: only ${validated.length} gifts passed validation — asking Claude for replacements`);
     const rejectNote = {
       ...basePrompt,
       retry: true,
@@ -233,7 +251,7 @@ export async function claudeSuggestGifts(input: {
   }
 
   if (validated.length < Math.min(4, count)) {
-    console.warn("engine: Claude gift brain could not produce enough validated gifts");
+    engineWarn("engine: Claude gift brain could not produce enough validated gifts");
     return validated.length ? { tip: parsed?.tip ?? null, items: validated.slice(0, count) } : null;
   }
 

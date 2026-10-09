@@ -34,7 +34,7 @@ export const engineEnvDefaults: Record<string, string> = {
 
   // Engine toggles
   ENGINE_ENABLED: "true",
-  ENGINE_MODE: "claude-suggest",
+  ENGINE_MODE: "keyword-search",
   ENGINE_USE_AI: "true",
   ENGINE_RECOMMENDATION_COUNT: "12",
   ENGINE_PAGE_SIZE: "4",

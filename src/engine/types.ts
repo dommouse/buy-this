@@ -54,14 +54,27 @@ export type Recommendation = {
   reason: string;
 };
 
+/** One engine log line collected during recommend() — mirrored to browser console. */
+export type EngineLogEntry = {
+  t: number;
+  level: "log" | "info" | "warn" | "error";
+  message: string;
+};
+
 export type RecommendationResult = {
   recommendationId: string | null;
   modelVersion: string;
-  strategy: "claude-suggest" | "hybrid-ai" | "scoring" | "claude-catalog";
+  strategy: "keyword-search" | "claude-suggest" | "hybrid-ai" | "scoring" | "claude-catalog";
   tip: string | null;
   items: Recommendation[];
   /** Total gifts returned (same as items.length). */
   total: number;
   /** Suggested page size for the results UI. */
   pageSize: number;
+  /**
+   * Server-side engine logs for this run.
+   * The results page prints these with console.log/warn/error so production
+   * DevTools (Inspect → Console) shows the full recommend path.
+   */
+  engineLogs: EngineLogEntry[];
 };

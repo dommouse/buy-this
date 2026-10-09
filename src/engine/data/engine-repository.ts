@@ -8,6 +8,7 @@ import { extractAsin } from "../catalog/product-images";
 import { isAmazonPdpUrl, isAmazonSearchUrl } from "../catalog/product-validator";
 import { engineConfig } from "../config";
 import type { Product, ProductStats, Recommendation } from "../types";
+import { engineWarn } from "../utils/logger";
 
 function tagAmazonProducts(products: Product[]): Product[] {
   return products
@@ -66,7 +67,7 @@ export async function loadProducts(): Promise<Product[]> {
   if (productCache && Date.now() - productCache.at < 60_000) return productCache.products;
   const { data, error } = await untyped().from("products").select("*").eq("active", true).limit(2000);
   if (error || !data?.length) {
-    if (error) console.warn("engine: products table unavailable, using Amazon/starter fallback", error.message);
+    if (error) engineWarn("engine: products table unavailable, using Amazon/starter fallback", error.message);
     const fallback = fallbackCatalog();
     productCache = { at: Date.now(), products: fallback };
     return fallback;
@@ -127,7 +128,7 @@ export async function upsertSuggestedProducts(items: Recommendation[]) {
     updated_at: new Date().toISOString(),
   }));
   const { error } = await untyped().from("products").upsert(rows, { onConflict: "id" });
-  if (error) console.warn("engine: could not upsert suggested products", error.message);
+  if (error) engineWarn("engine: could not upsert suggested products", error.message);
   else productCache = null;
 }
 
@@ -217,19 +218,19 @@ export async function saveRecommendations(row: {
       strategy: row.strategy,
     })),
   );
-  if (error) console.warn("engine: could not log recommendations", error.message);
+  if (error) engineWarn("engine: could not log recommendations", error.message);
 }
 
 /** Fire-and-forget: the database decides whether training is due. */
 export async function maybeTrain(minIntervalMinutes: number) {
   if (!engineConfig.trainingEnabled) return;
   const { error } = await untyped().rpc("engine_train", { min_interval_minutes: minIntervalMinutes });
-  if (error) console.warn("engine: training skipped", error.message);
+  if (error) engineWarn("engine: training skipped", error.message);
 }
 
 /** Optional cleanup of old interaction events (AI analytics only). */
 export async function cleanupOldEvents(retentionDays = engineConfig.eventRetentionDays) {
   const cutoff = new Date(Date.now() - retentionDays * 86_400_000).toISOString();
   const { error } = await untyped().from("interaction_events").delete().lt("created_at", cutoff);
-  if (error) console.warn("engine: event cleanup skipped", error.message);
+  if (error) engineWarn("engine: event cleanup skipped", error.message);
 }

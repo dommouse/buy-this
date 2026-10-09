@@ -2,6 +2,7 @@ import { withAmazonTag, isAmazonUrl, amazonAsinUrl } from "./amazon";
 import { toAffiliateUrl as toSkimlinksUrl } from "./skimlinks";
 import { engineConfig } from "../config";
 import { extractAsin } from "../catalog/product-images";
+import { engineWarn } from "../utils/logger";
 
 export { amazonSearchUrl, amazonAsinUrl, isAmazonUrl, withAmazonTag } from "./amazon";
 export { toAffiliateUrl as toSkimlinksUrl } from "./skimlinks";
@@ -22,7 +23,7 @@ export function toBuyUrl(rawUrl: string, opts?: { customId?: string | null }): s
     try {
       const u = new URL(rawUrl);
       if (u.pathname === "/s" || u.pathname.startsWith("/s/") || u.searchParams.has("k")) {
-        console.warn("engine: refusing Amazon search URL for BUY THIS", rawUrl.slice(0, 100));
+        engineWarn("engine: refusing Amazon search URL for BUY THIS", rawUrl.slice(0, 100));
         return rawUrl; // caller/validator should drop; do not rewrite to another search
       }
     } catch {

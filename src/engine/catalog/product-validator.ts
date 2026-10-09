@@ -1,7 +1,16 @@
 import { amazonAsinUrl } from "../affiliates/amazon";
+import { matchesAvoidCategory } from "../config";
+import { genderMismatch } from "../features/fit";
 import type { ProfileFeatures } from "../features/profile";
 import type { Product, Recommendation } from "../types";
+import { engineWarn } from "../utils/logger";
 import { amazonAsinImageUrl, extractAsin } from "./product-images";
+
+/** True when product is in engineConfig.avoidCategories (candles, perfume, etc.). */
+export function isAvoidedGiftCategory(product: Product): boolean {
+  const blob = `${product.title} ${product.description} ${product.category} ${product.tags.join(" ")}`;
+  return matchesAvoidCategory(blob) != null;
+}
 
 /**
  * Budget gate from questionnaire:
@@ -173,6 +182,17 @@ export async function validateRecommendations(
     if (!priceInBudget(p.price, opts.features.budget)) continue;
     if (!p.ageGroups.includes(opts.features.ageGroup)) continue;
     if (ageInappropriate(p, opts.features)) continue;
+    if (genderMismatch(p, opts.features.gender)) {
+      engineWarn("engine: dropping gender-mismatched gift", p.title);
+      continue;
+    }
+    if (isAvoidedGiftCategory(p)) {
+      const hit = matchesAvoidCategory(
+        `${p.title} ${p.description} ${p.category} ${p.tags.join(" ")}`,
+      );
+      engineWarn(`engine: dropping avoided category (${hit?.id})`, p.title);
+      continue;
+    }
 
     const avoidHit = opts.features.avoidWords.some((w) =>
       `${p.title} ${p.description} ${p.category}`.toLowerCase().includes(w),
@@ -181,7 +201,7 @@ export async function validateRecommendations(
 
     // Hard reject Amazon search-result URLs — BUY THIS must be a product page.
     if (isAmazonSearchUrl(p.buyUrl)) {
-      console.warn("engine: dropping Amazon search URL (need /dp/ASIN)", p.title);
+      engineWarn("engine: dropping Amazon search URL (need /dp/ASIN)", p.title);
       continue;
     }
 
@@ -190,13 +210,13 @@ export async function validateRecommendations(
 
     if (shopGood && requireAsin) {
       if (!asin || !isValidAsinFormat(asin)) {
-        console.warn("engine: dropping gift without live ASIN", p.title);
+        engineWarn("engine: dropping gift without live ASIN", p.title);
         continue;
       }
       if (seenAsin.has(asin)) continue;
       const status = await probeAsin(asin);
       if (status !== "alive") {
-        console.warn(`engine: dropping ${status} ASIN (BUY THIS requires live /dp)`, asin, p.title);
+        engineWarn(`engine: dropping ${status} ASIN (BUY THIS requires live /dp)`, asin, p.title);
         continue;
       }
       seenAsin.add(asin);
@@ -212,7 +232,7 @@ export async function validateRecommendations(
       if (seenAsin.has(asin)) continue;
       const status = await probeAsin(asin);
       if (status !== "alive") {
-        console.warn(`engine: dropping ${status} ASIN`, asin, p.title);
+        engineWarn(`engine: dropping ${status} ASIN`, asin, p.title);
         continue;
       }
       seenAsin.add(asin);
@@ -222,7 +242,7 @@ export async function validateRecommendations(
     }
 
     if (isAmazonUrlish(p.buyUrl) && !isAmazonPdpUrl(p.buyUrl)) {
-      console.warn("engine: dropping non-PDP Amazon URL", p.title, p.buyUrl.slice(0, 80));
+      engineWarn("engine: dropping non-PDP Amazon URL", p.title, p.buyUrl.slice(0, 80));
       continue;
     }
 
@@ -247,11 +267,13 @@ function isAmazonUrlish(url: string): boolean {
   }
 }
 
-/** Catalog fillers: must already be Amazon /dp/ASIN + age + budget. */
+/** Catalog fillers: must already be Amazon /dp/ASIN + age + budget + gender. */
 export function catalogEligible(product: Product, features: ProfileFeatures): boolean {
   if (!priceInBudget(product.price, features.budget)) return false;
   if (!product.ageGroups.includes(features.ageGroup)) return false;
   if (ageInappropriate(product, features)) return false;
+  if (genderMismatch(product, features.gender)) return false;
+  if (isAvoidedGiftCategory(product)) return false;
   if (isAmazonSearchUrl(product.buyUrl)) return false;
   const asin = extractAsin(product.buyUrl);
   return !!asin && isAmazonPdpUrl(product.buyUrl);

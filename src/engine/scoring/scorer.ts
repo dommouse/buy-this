@@ -1,4 +1,5 @@
-import { engineConfig } from "../config";
+import { engineConfig, matchesAvoidCategory } from "../config";
+import { genderMismatch } from "../features/fit";
 import type { ProfileFeatures } from "../features/profile";
 import type { Product, ProductStats, ScoredProduct } from "../types";
 
@@ -44,6 +45,11 @@ export function scoreProducts(
   const maxPop = Math.max(1, ...products.map((p) => p.popularity));
   return products
     .filter((p) => p.ageGroups.includes(f.ageGroup))
+    .filter((p) => !genderMismatch(p, f.gender))
+    .filter(
+      (p) =>
+        !matchesAvoidCategory(`${p.title} ${p.description} ${p.category} ${p.tags.join(" ")}`),
+    )
     .filter((p) => !f.avoidWords.some((w) => `${p.title} ${p.description} ${p.category}`.toLowerCase().includes(w)))
     // Age is strict; budget max is strict; budget min is soft (see priceInBudget).
     .filter((p) => {
@@ -60,6 +66,12 @@ export function scoreProducts(
       const beh = behaviorScore(statsByProduct.get(product.id));
       const pop = product.popularity / maxPop;
       const typeBoost = f.giftType && product.giftType === f.giftType ? 0.08 : 0;
+      const genderBoost =
+        f.gender === "woman" && /\b(women|ladies|beauty)\b/i.test(`${product.title} ${product.tags.join(" ")}`)
+          ? 0.1
+          : f.gender === "man" && /\b(men|grooming)\b/i.test(`${product.title} ${product.tags.join(" ")}`)
+            ? 0.1
+            : 0;
       const amazonBoost =
         engineConfig.amazon.enabled &&
         engineConfig.amazon.preferAmazonFallback &&
@@ -74,10 +86,12 @@ export function scoreProducts(
         beh.score * behW +
         pop * w.popularity +
         typeBoost +
+        genderBoost +
         amazonBoost;
       const reasons = [
         ...c.hits.map((h) => `matches ${h}`),
         b === 1 ? "fits the budget" : "",
+        genderBoost > 0 ? "suits their gender" : "",
         beh.confidence > 0.3 && beh.score > 0.5 ? "popular with similar shoppers" : "",
         amazonBoost > 0 ? "available on Amazon" : "",
       ].filter(Boolean);
