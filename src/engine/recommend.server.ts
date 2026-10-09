@@ -23,7 +23,14 @@ import { extractProfileFeatures } from "./features/profile";
 import { AiUnavailableError as KeywordAiUnavailableError, keywordSearchRecommend } from "./keyword-recommend.server";
 import { assignSlotsToAll } from "./scoring/ranker";
 import { scoreProducts } from "./scoring/scorer";
-import type { Recommendation, RecipientProfile, RecommendationResult, ScoredProduct } from "./types";
+import type {
+  EngineLogEntry,
+  Recommendation,
+  RecipientProfile,
+  RecommendationResult,
+  RecommendStreamEvent,
+  ScoredProduct,
+} from "./types";
 import { engineError, engineLog, engineWarn, takeEngineLogs, withEngineLogs } from "./utils/logger";
 
 let aiPausedUntil = 0;
@@ -36,9 +43,62 @@ let aiPausedUntil = 0;
 export async function recommend(
   profile: RecipientProfile,
   ctx: { searchId: string | null; sessionId: string | null },
+  opts?: { onLog?: (entry: EngineLogEntry) => void },
 ): Promise<RecommendationResult> {
-  const { value, logs } = await withEngineLogs(() => recommendInner(profile, ctx));
+  const { value, logs } = await withEngineLogs(
+    () => recommendInner(profile, ctx),
+    opts?.onLog ? { onLog: opts.onLog } : undefined,
+  );
   return { ...value, engineLogs: logs };
+}
+
+/**
+ * Streams live progress events, then a final result — used by the results page
+ * so the UI + browser console update as the engine works.
+ */
+export async function* recommendStream(
+  profile: RecipientProfile,
+  ctx: { searchId: string | null; sessionId: string | null },
+): AsyncGenerator<RecommendStreamEvent> {
+  type Queued = RecommendStreamEvent;
+  const queue: Queued[] = [];
+  let wake: (() => void) | null = null;
+  let finished = false;
+
+  const bump = () => {
+    wake?.();
+    wake = null;
+  };
+
+  const run = recommend(profile, ctx, {
+    onLog: (entry) => {
+      queue.push({ type: "progress", entry });
+      bump();
+    },
+  })
+    .then((result) => {
+      queue.push({ type: "result", result });
+      finished = true;
+      bump();
+    })
+    .catch((err) => {
+      const message = err instanceof Error ? err.message : String(err);
+      queue.push({ type: "error", message });
+      finished = true;
+      bump();
+    });
+
+  while (!finished || queue.length > 0) {
+    while (queue.length > 0) {
+      yield queue.shift()!;
+    }
+    if (finished) break;
+    await new Promise<void>((resolve) => {
+      wake = resolve;
+    });
+  }
+
+  await run;
 }
 
 async function recommendInner(

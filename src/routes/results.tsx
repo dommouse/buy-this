@@ -27,11 +27,13 @@ import { createEmailCapture } from "@/db/repositories/email-captures";
 import { createGiftSearch } from "@/db/repositories/gift-searches";
 import {
   getRecommendations,
+  printEngineLogLive,
   printEngineLogsToConsole,
   productSourceLabel,
   trackInteraction,
   type Recommendation,
   type RecommendationResult,
+  type RecommendStreamEvent,
 } from "@/engine";
 import { amazonAsinImageUrlFallback, extractAsin } from "@/engine/catalog/product-images";
 import { useGiftAnswers, type GiftAnswers } from "@/lib/gift-answers-context";
@@ -60,17 +62,8 @@ const slotMeta: Record<string, { emoji: string; subtitle: string; icon: LucideIc
 const defaultTip =
   "Pro tip from your Gift Brain: Wrap this in brown kraft paper with a pink ribbon for that perfect unboxing moment. Presentation is everything!";
 
-/** Live subtitles while Dominique builds phrases + searches — keeps focus during long waits. */
-const THINKING_LINES = [
-  "Reading your answers like a gift detective…",
-  "Building smart search phrases for each gift slot…",
-  "Checking the block list — no lazy mug-or-socks gifts…",
-  "Pivoting any blocked angles into fresher ideas…",
-  "Searching real product catalogs (Amazon first)…",
-  "Staying inside their budget — no sticker shock…",
-  "Picking The One, The Wow, Smart Pick & Wildcard…",
-  "Writing a short tip on how to present the gift…",
-];
+/** Fallback status while waiting for the first streamed engine progress event. */
+const FALLBACK_THINKING = "Dominique is warming up the gift brain…";
 
 function toProfile(answers: GiftAnswers) {
   return {
@@ -122,7 +115,8 @@ function ResultsPage() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [page, setPage] = useState(0);
-  const [statusIdx, setStatusIdx] = useState(0);
+  const [liveStatus, setLiveStatus] = useState(FALLBACK_THINKING);
+  const [statusTrail, setStatusTrail] = useState<string[]>([]);
   const sessionIdRef = useRef(crypto.randomUUID());
   const bootstrappedRef = useRef(false);
   const trackedRef = useRef(false);
@@ -132,22 +126,14 @@ function ResultsPage() {
     searchIdRef.current = searchId;
   }, [searchId]);
 
-  // Rotate exciting status lines while the gift brain works.
-  useEffect(() => {
-    if (!loading) return;
-    setStatusIdx(0);
-    const id = window.setInterval(() => {
-      setStatusIdx((i) => (i + 1) % THINKING_LINES.length);
-    }, 2800);
-    return () => window.clearInterval(id);
-  }, [loading]);
-
   const loadRecommendations = async (opts?: { force?: boolean }) => {
     if (!answers) return;
     if (loading && !opts?.force) return;
     setLoading(true);
     setError(null);
     setResult(null);
+    setLiveStatus(FALLBACK_THINKING);
+    setStatusTrail([]);
     trackedRef.current = false;
 
     let nextSearchId = searchIdRef.current;
@@ -172,20 +158,87 @@ function ResultsPage() {
     }
 
     try {
-      const data = await getRecommendations({
+      console.log(
+        "%c[BUY THIS engine]%c live stream starting…",
+        "color:#c45c26;font-weight:bold",
+        "color:inherit",
+      );
+
+      const stream = await getRecommendations({
         data: {
           profile: toProfile(answers),
           searchId: nextSearchId,
           sessionId: sessionIdRef.current,
         },
       });
-      // Mirror server engine logs into the browser console (Inspect → Console on production).
-      printEngineLogsToConsole(data.engineLogs, {
-        strategy: data.strategy,
-        modelVersion: data.modelVersion,
-      });
 
-      if (!data.items?.length) {
+      let data: RecommendationResult | null = null;
+
+      // Async generator (or ReadableStream) — print each log as it arrives.
+      const consume = async (events: AsyncIterable<RecommendStreamEvent>) => {
+        for await (const event of events) {
+          if (event.type === "progress") {
+            printEngineLogLive(event.entry);
+            const copy =
+              event.entry.userMessage ||
+              event.entry.message.replace(/^engine:\s*/i, "") ||
+              FALLBACK_THINKING;
+            setLiveStatus(copy);
+            setStatusTrail((prev) => {
+              if (prev[prev.length - 1] === copy) return prev;
+              return [...prev.slice(-4), copy];
+            });
+          } else if (event.type === "result") {
+            data = event.result;
+          } else if (event.type === "error") {
+            throw new Error(event.message);
+          }
+        }
+      };
+
+      const maybeStream = stream as unknown;
+      if (
+        maybeStream &&
+        typeof maybeStream === "object" &&
+        Symbol.asyncIterator in maybeStream
+      ) {
+        await consume(maybeStream as AsyncIterable<RecommendStreamEvent>);
+      } else if (
+        maybeStream &&
+        typeof maybeStream === "object" &&
+        "getReader" in maybeStream &&
+        typeof (maybeStream as ReadableStream<RecommendStreamEvent>).getReader === "function"
+      ) {
+        const reader = (maybeStream as ReadableStream<RecommendStreamEvent>).getReader();
+        async function* fromReader() {
+          while (true) {
+            const { value, done } = await reader.read();
+            if (done) break;
+            if (value) yield value;
+          }
+        }
+        await consume(fromReader());
+      } else {
+        // Legacy non-streaming response (single RecommendationResult).
+        data = maybeStream as RecommendationResult;
+        for (const entry of data.engineLogs ?? []) {
+          printEngineLogLive(entry);
+          if (entry.userMessage) setLiveStatus(entry.userMessage);
+        }
+      }
+
+      if (data?.engineLogs?.length) {
+        // Full picture summary after the live stream (easy to re-read in Console).
+        printEngineLogsToConsole(data.engineLogs, {
+          strategy: data.strategy,
+          modelVersion: data.modelVersion,
+        });
+      }
+
+      if (!data) {
+        setError("Dominique couldn't lock a shortlist yet. Try again — she's still learning.");
+        bootstrappedRef.current = false;
+      } else if (!data.items?.length) {
         setError("Dominique couldn't lock a shortlist yet. Try again — she's still learning.");
         setResult(data);
         bootstrappedRef.current = false;
@@ -193,6 +246,13 @@ function ResultsPage() {
         setResult(data);
         setPage(0);
         setError(null);
+        setLiveStatus(`Ready — ${data.items.length} gifts picked for you.`);
+        console.log(
+          `%c[BUY THIS engine]%c done — ${data.items.length} gifts · strategy=${data.strategy}`,
+          "color:#c45c26;font-weight:bold",
+          "color:inherit",
+          data.items.map((i) => `${i.slot}: ${i.product.title}`),
+        );
       }
     } catch (err) {
       console.error("BUY THIS: recommendations failed", err);
@@ -233,7 +293,6 @@ function ResultsPage() {
   const totalPages = Math.max(1, Math.ceil(items.length / pageSize));
   const safePage = Math.min(page, totalPages - 1);
   const pageItems = items.slice(safePage * pageSize, safePage * pageSize + pageSize);
-  const thinkingLine = THINKING_LINES[statusIdx] ?? THINKING_LINES[0]!;
 
   return (
     <main className="min-h-dvh bg-background px-4 pb-10 pt-20 text-foreground sm:px-6 sm:pt-24">
@@ -251,7 +310,7 @@ function ResultsPage() {
           </p>
           {loading && (
             <p className="mt-3 min-h-6 text-sm font-medium text-primary transition-opacity duration-500 sm:text-base" aria-live="polite">
-              {thinkingLine}
+              {liveStatus}
             </p>
           )}
           {items.length > 0 && !loading && (
@@ -275,9 +334,23 @@ function ResultsPage() {
           <div className="flex flex-col items-center gap-4 py-16 text-center text-muted-foreground" role="status">
             <Loader2 className="size-10 animate-spin text-primary" aria-hidden="true" />
             <p className="text-lg font-bold text-foreground">Dominique is picking your gifts…</p>
-            <p className="max-w-md text-sm leading-6 text-primary sm:text-base" aria-live="polite">
-              {thinkingLine}
+            <p
+              key={liveStatus}
+              className="max-w-md animate-in fade-in text-sm leading-6 text-primary duration-300 sm:text-base"
+              aria-live="polite"
+            >
+              {liveStatus}
             </p>
+            {statusTrail.length > 1 && (
+              <ol className="mt-2 flex max-w-md flex-col gap-1.5 text-left text-xs text-muted-foreground sm:text-sm">
+                {statusTrail.slice(0, -1).map((line, i) => (
+                  <li key={`${i}-${line}`} className="flex gap-2 opacity-60">
+                    <span aria-hidden="true">✓</span>
+                    <span>{line}</span>
+                  </li>
+                ))}
+              </ol>
+            )}
             <p className="max-w-sm text-xs text-muted-foreground">
               Hang tight — she keeps searching until the best matches for your answers are ready.
             </p>

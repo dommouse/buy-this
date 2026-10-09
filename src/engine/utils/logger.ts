@@ -1,10 +1,14 @@
 import { AsyncLocalStorage } from "node:async_hooks";
+import { toUserProgress } from "../progress-copy";
 import type { EngineLogEntry } from "../types";
 
 export type EngineLogLevel = EngineLogEntry["level"];
 export type { EngineLogEntry };
 
-type LogStore = { logs: EngineLogEntry[] };
+type LogStore = {
+  logs: EngineLogEntry[];
+  onLog?: ((entry: EngineLogEntry) => void) | undefined;
+};
 
 const storage = new AsyncLocalStorage<LogStore>();
 
@@ -25,12 +29,25 @@ function formatMessage(args: unknown[]): string {
 
 function push(level: EngineLogLevel, args: unknown[]) {
   const message = formatMessage(args);
-  const entry: EngineLogEntry = { t: Date.now(), level, message };
+  const line = message.startsWith("engine:") ? message : `engine: ${message}`;
+  const userMessage = toUserProgress(line);
+  const entry: EngineLogEntry = {
+    t: Date.now(),
+    level,
+    message: line,
+    ...(userMessage ? { userMessage } : {}),
+  };
   const store = storage.getStore();
-  if (store) store.logs.push(entry);
+  if (store) {
+    store.logs.push(entry);
+    try {
+      store.onLog?.(entry);
+    } catch {
+      /* never break recommend on a bad listener */
+    }
+  }
 
   // Always mirror to the server process console as well.
-  const line = message.startsWith("engine:") ? message : `engine: ${message}`;
   if (level === "error") console.error(line);
   else if (level === "warn") console.warn(line);
   else if (level === "info") console.info(line);
@@ -54,9 +71,20 @@ export function engineError(...args: unknown[]) {
   push("error", args);
 }
 
+export type WithEngineLogsOptions = {
+  /** Fired synchronously as each log is written (for streaming to the client). */
+  onLog?: (entry: EngineLogEntry) => void;
+};
+
 /** Run a recommend pass while collecting every engineLog* call into a buffer. */
-export async function withEngineLogs<T>(fn: () => Promise<T>): Promise<{ value: T; logs: EngineLogEntry[] }> {
-  const store: LogStore = { logs: [] };
+export async function withEngineLogs<T>(
+  fn: () => Promise<T>,
+  opts?: WithEngineLogsOptions,
+): Promise<{ value: T; logs: EngineLogEntry[] }> {
+  const store: LogStore = {
+    logs: [],
+    ...(opts?.onLog ? { onLog: opts.onLog } : {}),
+  };
   const value = await storage.run(store, fn);
   return { value, logs: store.logs };
 }

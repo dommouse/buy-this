@@ -15,11 +15,22 @@ const profileSchema = z.object({
   giftType: z.string().max(100).default(""),
 });
 
+const recommendInput = z.object({
+  profile: profileSchema,
+  searchId: z.string().uuid().nullable(),
+  sessionId: z.string().max(100).nullable(),
+});
+
+/**
+ * Streams progress events as the engine runs, then a final result.
+ * Client prints each log to the browser console immediately and updates the status line.
+ */
 export const getRecommendations = createServerFn({ method: "POST" })
-  .validator((data) =>
-    z.object({ profile: profileSchema, searchId: z.string().uuid().nullable(), sessionId: z.string().max(100).nullable() }).parse(data),
-  )
-  .handler(async ({ data }) => {
-    const { recommend } = await import("./recommend.server");
-    return recommend(data.profile, { searchId: data.searchId, sessionId: data.sessionId });
+  .validator((data) => recommendInput.parse(data))
+  .handler(async function* ({ data }) {
+    const { recommendStream } = await import("./recommend.server");
+    yield* recommendStream(data.profile, {
+      searchId: data.searchId,
+      sessionId: data.sessionId,
+    });
   });

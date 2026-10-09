@@ -55,11 +55,13 @@ export function isValidAsinFormat(asin: string): boolean {
 const asinCache = new Map<string, "alive" | "dead" | "unknown">();
 
 const DEAD_PDP_RE =
-  /Sorry!\s*We couldn.?t find that page|looking for isn.?t available|Page Not Found|dogs of Amazon|Sorry,\s*we just need to make sure you.?re not a robot/i;
+  /Sorry!\s*We couldn.?t find that page|looking for isn.?t available|Page Not Found|dogs of Amazon/i;
+const BOT_WALL_RE = /just need to make sure you.?re not a robot|enter the characters you see|api-services-support@amazon/i;
 
 /**
- * Confirm an ASIN is a real Amazon product page.
- * Image widget alone is not enough (some dead ASINs still return a placeholder JPEG).
+ * Fast live check for an ASIN.
+ * Prefer Amazon image CDN (works on Lovable live). A solid product image ⇒ alive.
+ * Do NOT treat bot/CAPTCHA HTML walls as "dead" — that was wiping almost every gift on live.
  */
 export async function probeAsin(asin: string): Promise<"alive" | "dead" | "unknown"> {
   const clean = asin.trim().toUpperCase();
@@ -72,7 +74,7 @@ export async function probeAsin(asin: string): Promise<"alive" | "dead" | "unkno
     const res = await fetch(amazonAsinImageUrl(clean, 160), {
       method: "GET",
       redirect: "follow",
-      signal: AbortSignal.timeout(4_000),
+      signal: AbortSignal.timeout(2_500),
       headers: { Accept: "image/*,*/*", "User-Agent": "Mozilla/5.0 BUYTHIS/1.0" },
     });
     if (res.ok) {
@@ -82,14 +84,24 @@ export async function probeAsin(asin: string): Promise<"alive" | "dead" | "unkno
       else if (buf.byteLength > 0 && buf.byteLength < 800) imageHint = "dead";
     }
   } catch {
-    /* network — fall through to PDP */
+    /* image CDN blocked — try PDP */
+  }
+
+  // Image CDN is the reliable signal on live cloud hosts (Amazon often bot-walls HTML).
+  if (imageHint === "alive") {
+    asinCache.set(clean, "alive");
+    return "alive";
+  }
+  if (imageHint === "dead") {
+    asinCache.set(clean, "dead");
+    return "dead";
   }
 
   try {
     const res = await fetch(`https://www.amazon.com/dp/${clean}`, {
       method: "GET",
       redirect: "follow",
-      signal: AbortSignal.timeout(7_000),
+      signal: AbortSignal.timeout(3_500),
       headers: {
         Accept: "text/html,application/xhtml+xml",
         "Accept-Language": "en-US,en;q=0.9",
@@ -102,7 +114,12 @@ export async function probeAsin(asin: string): Promise<"alive" | "dead" | "unkno
       return "dead";
     }
     const text = await res.text();
-    if (DEAD_PDP_RE.test(text) || text.length < 8_000) {
+    // Bot wall / CAPTCHA — not proof the ASIN is dead.
+    if (BOT_WALL_RE.test(text)) {
+      asinCache.set(clean, "unknown");
+      return "unknown";
+    }
+    if (DEAD_PDP_RE.test(text) && text.length < 20_000) {
       asinCache.set(clean, "dead");
       return "dead";
     }
@@ -110,25 +127,31 @@ export async function probeAsin(asin: string): Promise<"alive" | "dead" | "unkno
       asinCache.set(clean, "alive");
       return "alive";
     }
-    if (imageHint === "dead") {
-      asinCache.set(clean, "dead");
-      return "dead";
-    }
     asinCache.set(clean, "unknown");
     return "unknown";
   } catch {
-    if (imageHint === "dead") {
-      asinCache.set(clean, "dead");
-      return "dead";
-    }
-    // Solid image + network block on PDP: treat as alive so local corporate nets still get /dp/ links.
-    if (imageHint === "alive") {
-      asinCache.set(clean, "alive");
-      return "alive";
-    }
     asinCache.set(clean, "unknown");
     return "unknown";
   }
+}
+
+/** Run probes with limited concurrency (faster than fully sequential). */
+export async function probeAsinsParallel(
+  asins: string[],
+  concurrency = 6,
+): Promise<Map<string, "alive" | "dead" | "unknown">> {
+  const unique = [...new Set(asins.map((a) => a.trim().toUpperCase()).filter(isValidAsinFormat))];
+  const out = new Map<string, "alive" | "dead" | "unknown">();
+  let i = 0;
+  async function worker() {
+    while (i < unique.length) {
+      const idx = i++;
+      const asin = unique[idx]!;
+      out.set(asin, await probeAsin(asin));
+    }
+  }
+  await Promise.all(Array.from({ length: Math.min(concurrency, unique.length) }, () => worker()));
+  return out;
 }
 
 export type ValidateOptions = {
@@ -175,6 +198,10 @@ export async function validateRecommendations(
   const seenAsin = new Set<string>();
   const seenTitle = new Set<string>();
 
+  // Soft filters first, then probe remaining ASINs in parallel (big latency win).
+  type SoftOk = { item: Recommendation; asin: string | null; shopGood: boolean };
+  const softOk: SoftOk[] = [];
+
   for (const item of items) {
     const p = item.product;
     const titleKey = p.title.trim().toLowerCase();
@@ -199,7 +226,6 @@ export async function validateRecommendations(
     );
     if (avoidHit) continue;
 
-    // Hard reject Amazon search-result URLs — BUY THIS must be a product page.
     if (isAmazonSearchUrl(p.buyUrl)) {
       engineWarn("engine: dropping Amazon search URL (need /dp/ASIN)", p.title);
       continue;
@@ -214,30 +240,19 @@ export async function validateRecommendations(
         continue;
       }
       if (seenAsin.has(asin)) continue;
-      const status = await probeAsin(asin);
-      if (status !== "alive") {
-        engineWarn(`engine: dropping ${status} ASIN (BUY THIS requires live /dp)`, asin, p.title);
-        continue;
-      }
       seenAsin.add(asin);
       seenTitle.add(titleKey);
-      out.push({ ...item, product: normalizeAliveAsin(p, asin) });
+      softOk.push({ item, asin, shopGood: true });
       continue;
     }
 
     if (!p.buyUrl.startsWith("http")) continue;
 
-    // Experiences / non-shop: allow non-Amazon merchants; Amazon must still be PDP.
     if (isAmazonPdpUrl(p.buyUrl) && asin) {
       if (seenAsin.has(asin)) continue;
-      const status = await probeAsin(asin);
-      if (status !== "alive") {
-        engineWarn(`engine: dropping ${status} ASIN`, asin, p.title);
-        continue;
-      }
       seenAsin.add(asin);
       seenTitle.add(titleKey);
-      out.push({ ...item, product: normalizeAliveAsin(p, asin) });
+      softOk.push({ item, asin, shopGood: false });
       continue;
     }
 
@@ -247,11 +262,32 @@ export async function validateRecommendations(
     }
 
     seenTitle.add(titleKey);
+    softOk.push({ item, asin: asin && isValidAsinFormat(asin) ? asin : null, shopGood: false });
+  }
+
+  const toProbe = softOk.map((s) => s.asin).filter((a): a is string => !!a);
+  const statuses = await probeAsinsParallel(toProbe, 8);
+
+  for (const row of softOk) {
+    const p = row.item.product;
+    if (row.asin && (row.shopGood || isAmazonPdpUrl(p.buyUrl))) {
+      const status = statuses.get(row.asin) ?? "unknown";
+      if (status === "dead") {
+        engineWarn(`engine: dropping dead ASIN (BUY THIS requires live /dp)`, row.asin, p.title);
+        continue;
+      }
+      if (status === "unknown") {
+        engineWarn(`engine: soft-keeping unknown ASIN (CDN/bot wall)`, row.asin, p.title);
+      }
+      out.push({ ...row.item, product: normalizeAliveAsin(p, row.asin) });
+      continue;
+    }
+
     out.push({
-      ...item,
+      ...row.item,
       product: {
         ...p,
-        imageUrl: asin ? amazonAsinImageUrl(asin, 300) : p.imageUrl,
+        imageUrl: row.asin ? amazonAsinImageUrl(row.asin, 300) : p.imageUrl,
       },
     });
   }

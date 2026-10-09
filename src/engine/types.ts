@@ -58,7 +58,10 @@ export type Recommendation = {
 export type EngineLogEntry = {
   t: number;
   level: "log" | "info" | "warn" | "error";
+  /** Raw server log, e.g. "engine: searching slot The One". */
   message: string;
+  /** Short friendly line for the results UI (optional). */
+  userMessage?: string;
 };
 
 export type RecommendationResult = {
@@ -73,8 +76,13 @@ export type RecommendationResult = {
   pageSize: number;
   /**
    * Server-side engine logs for this run.
-   * The results page prints these with console.log/warn/error so production
-   * DevTools (Inspect → Console) shows the full recommend path.
+   * Streamed live to the browser console; also returned in full on the final result.
    */
   engineLogs: EngineLogEntry[];
 };
+
+/** Chunks streamed from getRecommendations while the engine runs. */
+export type RecommendStreamEvent =
+  | { type: "progress"; entry: EngineLogEntry }
+  | { type: "result"; result: RecommendationResult }
+  | { type: "error"; message: string };

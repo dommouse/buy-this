@@ -3,6 +3,14 @@
 export { getRecommendations } from "./recommend.functions";
 export { trackInteraction } from "./tracking";
 export { productSourceLabel } from "./source-label";
-export { printEngineLogsToConsole } from "./browser-logs";
-export type { Recommendation, RecommendationResult, RecipientProfile, Product, EngineLogEntry } from "./types";
+export { printEngineLogLive, printEngineLogsToConsole } from "./browser-logs";
+export { toUserProgress, toUserProgressOrFallback } from "./progress-copy";
+export type {
+  Recommendation,
+  RecommendationResult,
+  RecipientProfile,
+  Product,
+  EngineLogEntry,
+  RecommendStreamEvent,
+} from "./types";
 export type { InteractionType } from "./tracking";
