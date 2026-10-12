@@ -21,6 +21,13 @@ type Row = [
 ];
 
 const rows: Row[] = [
+  // Kids / under-$25 emergency fillers (ages include child) — keeps shortlists non-empty when Claude times out.
+  ["amz-hotwheels-20", "Hot Wheels 20-Car Pack", "A stash of die-cast cars for racing and collecting.", "Toys", 20, ["Sports/Fitness", "Gaming", "audience:kids", "for boys"], ["child", "teen"], "physical", "B00IT13H9S"],
+  ["amz-playdoh-case", "Play-Doh Modeling Compound Case", "Classic colorful dough for creative playdates.", "Toys", 18, ["DIY/Crafts", "Creative", "audience:kids"], ["child"], "physical", "B009AQ3F3M"],
+  ["amz-kinetic-sand", "Kinetic Sand Play Set", "Mess-free moldable sand kids can shape again and again.", "Toys", 16, ["DIY/Crafts", "Creative", "audience:kids"], ["child"], "physical", "B00KAL5KQ0"],
+  ["amz-crayola-kit", "Crayola Inspiration Art Case", "Crayons, markers and paper for little artists.", "Toys", 22, ["DIY/Crafts", "Creative", "audience:kids"], ["child", "teen"], "physical", "B01C4MSKGS"],
+  ["amz-duplo-box", "LEGO DUPLO Classic Brick Box", "Chunky bricks sized for little hands (ages 1.5–5).", "Toys", 24, ["DIY/Crafts", "Creative", "audience:kids"], ["child"], "physical", "B00NHQFZ1A"],
+  ["amz-unicorn-plush", "Soft Unicorn Plush Toy", "Huggable plush friend for bedtime snuggles.", "Toys", 15, ["audience:kids", "for girls"], ["child"], "physical", "B07D3F7QXP"],
   ["amz-kindle-paperwhite", "Kindle Paperwhite", "Glare-free e-reader with weeks of battery — perfect for book lovers.", "Books", 139, ["Reading", "Travel", "Homebody", "Intellectual"], ["adult", "teen"], "physical", "B0CFPJYX7P"],
   ["amz-echo-pop", "Echo Pop Smart Speaker", "Compact Alexa speaker with rich sound for kitchens and desks.", "Tech", 39, ["Tech/Gadgets", "Homebody", "Hustler"], ["adult", "teen"], "physical", "B09B8V1LZ3"],
   ["amz-fire-tv-stick", "Fire TV Stick 4K", "Stream movies and shows in 4K with Alexa voice remote.", "Tech", 49, ["Movies/TV", "Tech/Gadgets", "Homebody"], ["adult", "teen"], "physical", "B0BP9SNVH9"],
@@ -47,7 +54,13 @@ export const amazonCatalog: Product[] = rows.map(
     tags,
     ageGroups,
     giftType,
-    audience: "unisex" as const,
+    audience: ageGroups.includes("child")
+      ? ("kids" as const)
+      : tags.some((t) => /for girls|women/i.test(t))
+        ? ("women" as const)
+        : tags.some((t) => /for boys|for men|\bDad\b/i.test(t))
+          ? ("men" as const)
+          : ("unisex" as const),
     imageUrl: amazonAsinImageUrl(asin),
     buyUrl: amazonAsinUrl(asin),
     provider: "amazon",

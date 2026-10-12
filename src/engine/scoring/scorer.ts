@@ -45,7 +45,7 @@ export function scoreProducts(
   const maxPop = Math.max(1, ...products.map((p) => p.popularity));
   return products
     .filter((p) => p.ageGroups.includes(f.ageGroup))
-    .filter((p) => !genderMismatch(p, f.gender))
+    .filter((p) => !genderMismatch(p, f.gender, f.ageGroup))
     .filter(
       (p) =>
         !matchesAvoidCategory(`${p.title} ${p.description} ${p.category} ${p.tags.join(" ")}`),

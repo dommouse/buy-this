@@ -213,7 +213,16 @@ async function ensureNonEmpty(
 ): Promise<Recommendation[]> {
   if (items.length >= Math.min(4, limit)) return items.slice(0, limit);
   engineWarn(`engine: only ${items.length} gifts — filling from emergency catalog`);
-  const fillerDraft = emergencyGiftList(catalogScored, features, limit * 2);
+  let fillerDraft = emergencyGiftList(catalogScored, features, limit * 2);
+  // Child/teen catalogs can be thin — if age filter emptied the pool, allow age-group soft fill.
+  if (!fillerDraft.length && (features.ageGroup === "child" || features.ageGroup === "teen")) {
+    engineWarn("engine: no age-matched emergency gifts — softening age filter for catalog fill");
+    fillerDraft = emergencyGiftList(
+      catalogScored.filter((s) => s.product.ageGroups.includes(features.ageGroup) || s.product.audience === "kids"),
+      { ...features, gender: features.gender },
+      limit * 2,
+    );
+  }
   const filler = await validateRecommendations(fillerDraft, { features, sessionId });
   const seen = new Set(items.map((i) => i.product.title.toLowerCase()));
   const merged = [...items];

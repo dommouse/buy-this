@@ -32,7 +32,7 @@ function pickFourSlots(
   const phraseBySlot = new Map(phrases.map((p) => [p.slot, p]));
 
   for (const slot of SLOTS) {
-    const pool = (bySlot.get(slot) ?? []).filter((p) => !genderMismatch(p, features.gender));
+    const pool = (bySlot.get(slot) ?? []).filter((p) => !genderMismatch(p, features.gender, features.ageGroup));
     const ranked = rankByAnswerFit(pool, profile, features, statsByProduct);
     const product = ranked.find((p) => {
       const asin = extractAsin(p.buyUrl)?.toUpperCase() || p.id;
@@ -64,7 +64,7 @@ function pickFourSlots(
     const pool: Product[] = [];
     for (const list of bySlot.values()) {
       for (const p of list) {
-        if (!genderMismatch(p, features.gender)) pool.push(p);
+        if (!genderMismatch(p, features.gender, features.ageGroup)) pool.push(p);
       }
     }
     const ranked = rankByAnswerFit(pool, profile, features, statsByProduct);
@@ -131,20 +131,36 @@ export async function keywordSearchRecommend(input: {
 
   const [minUsd, maxUsd] = features.budget ?? [null, null];
 
-  // Single batch Claude call for all slots (big latency win).
-  const rawBySlot = await searchAmazonAllSlots({
+  const batchArgs = {
     slots: phrases.map((p) => ({ slot: p.slot, phrase: p.phrase, angle: p.angle })),
     maxPriceUsd: maxUsd,
     minPriceUsd: minUsd,
     ageGroup: features.ageGroup,
     gender: features.gender,
     interests: bounds.interests.slice(0, 6),
-    perSlotLimit: 4,
     ...(features.ageRange ? { ageRange: features.ageRange } : {}),
     ...(profile.relationship ? { relationship: profile.relationship } : {}),
     ...(profile.occasion ? { occasion: profile.occasion } : {}),
     ...(profile.vibe ? { vibe: profile.vibe } : {}),
-  });
+  } as const;
+
+  // Single batch Claude call for all slots (big latency win). Retry lighter if aborted.
+  let rawBySlot: Awaited<ReturnType<typeof searchAmazonAllSlots>>;
+  try {
+    rawBySlot = await searchAmazonAllSlots({ ...batchArgs, perSlotLimit: 3 });
+  } catch (err) {
+    const aborted =
+      (err instanceof Error && err.name === "AbortError") ||
+      /aborted|timeout|AbortError/i.test(String((err as Error)?.message ?? err));
+    if (!aborted) throw err;
+    engineWarn("engine: batch search aborted — retrying lighter request");
+    try {
+      rawBySlot = await searchAmazonAllSlots({ ...batchArgs, perSlotLimit: 2 });
+    } catch (err2) {
+      engineWarn("engine: batch search retry failed", err2);
+      return null;
+    }
+  }
   const batchTip = takeLastBatchTip();
 
   // Flatten → validate once in parallel soft-probe path.

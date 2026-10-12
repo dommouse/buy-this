@@ -1,6 +1,6 @@
 import { engineConfig } from "../config";
 import type { ProfileFeatures } from "./profile";
-import type { GenderAudience, Product, ProductStats, RecipientProfile } from "../types";
+import type { AgeGroup, GenderAudience, Product, ProductStats, RecipientProfile } from "../types";
 
 function localBehaviorScore(stats: ProductStats[] | undefined) {
   if (!stats?.length) return { score: 0, confidence: 0 };
@@ -92,37 +92,57 @@ export function answerBounds(profile: RecipientProfile, features: ProfileFeature
 }
 
 /**
- * True when a product is clearly aimed at the opposite gender.
- * Unisex / unknown / kids (with matching age) always pass when gender is set.
+ * Search / prompt cue for gender — children/teens use boys/girls, never "for men/women".
  */
-export function genderMismatch(product: Product, gender: GenderFit): boolean {
+export function genderSearchCue(ageGroup: AgeGroup, gender: GenderFit): string | null {
+  if (gender === "unspecified" || gender === "nonbinary") return null;
+  if (ageGroup === "child") {
+    return gender === "woman" ? "for girls" : "for boys";
+  }
+  if (ageGroup === "teen") {
+    return gender === "woman" ? "for teen girls" : "for teen boys";
+  }
+  return gender === "woman" ? "for women" : "for men";
+}
+
+/**
+ * True when a product is clearly aimed at the opposite gender.
+ * Kids/teens: only block adult opposite-gender or opposite kids-gender items — never
+ * treat a 3-year-old boy as needing "men's" products.
+ */
+export function genderMismatch(
+  product: Product,
+  gender: GenderFit,
+  ageGroup: AgeGroup = "adult",
+): boolean {
   if (gender === "unspecified" || gender === "nonbinary") return false;
 
   const audience = resolveAudience(product);
-  if (audience === "unisex" || audience === "unknown" || audience === "kids") {
-    // Still catch opposite-gender-only language when audience was unknown.
-    if (audience !== "unknown") return false;
-  }
-
-  if (gender === "woman") {
-    if (audience === "men") return true;
-  }
-  if (gender === "man") {
-    if (audience === "women") return true;
-  }
-
   const blob = `${product.title} ${product.description} ${product.category} ${product.tags.join(" ")}`.toLowerCase();
   const unisex = /\bunisex\b|\ball genders\b|\bfor everyone\b|\bgender.?neutral\b/.test(blob);
-  if (unisex) return false;
+  if (unisex || audience === "unisex") return false;
 
-  const forWomen =
-    /\b(women'?s|womens|for women|ladies|her |girl'?s|female|makeup|lipstick|mascara|nursing bra|menstrual)\b/.test(
-      blob,
-    );
-  const forMen = /\b(men'?s|mens|for men|his |boy'?s|male|beard oil|beard trimmer)\b/.test(blob);
+  const adultWomen =
+    audience === "women" ||
+    /\b(women'?s|womens|for women|ladies|makeup|lipstick|mascara|nursing bra|menstrual)\b/.test(blob);
+  const adultMen =
+    audience === "men" ||
+    /\b(men'?s|mens|for men|beard oil|beard trimmer|men'?s grooming)\b/.test(blob);
+  const girls =
+    /\b(girl'?s|for girls|little girl)\b/.test(blob) && !/\b(boy'?s|for boys)\b/.test(blob);
+  const boys =
+    /\b(boy'?s|for boys|little boy)\b/.test(blob) && !/\b(girl'?s|for girls)\b/.test(blob);
 
-  if (gender === "woman") return forMen && !forWomen;
-  if (gender === "man") return forWomen && !forMen;
+  if (ageGroup === "child" || ageGroup === "teen") {
+    // Kids gifts are usually fine unless clearly for the opposite child gender or adult-only opposite sex.
+    if (gender === "man") return adultWomen || girls;
+    if (gender === "woman") return adultMen || boys;
+    return false;
+  }
+
+  if (audience === "kids") return false;
+  if (gender === "woman") return adultMen && !adultWomen;
+  if (gender === "man") return adultWomen && !adultMen;
   return false;
 }
 
@@ -134,14 +154,18 @@ export function answerFitScore(product: Product, profile: RecipientProfile, feat
   const audience = resolveAudience(product);
 
   if (bounds.genderLabel === "woman") {
-    if (audience === "women") score += 0.35;
+    if (features.ageGroup === "child" || features.ageGroup === "teen") {
+      if (/\b(girl|girls)\b/.test(blob) || audience === "kids") score += 0.25;
+    } else if (audience === "women") score += 0.35;
     else if (/\b(women|ladies|her |beauty|skincare|makeup)\b/.test(blob)) score += 0.2;
   }
   if (bounds.genderLabel === "man") {
-    if (audience === "men") score += 0.35;
+    if (features.ageGroup === "child" || features.ageGroup === "teen") {
+      if (/\b(boy|boys)\b/.test(blob) || audience === "kids") score += 0.25;
+    } else if (audience === "men") score += 0.35;
     else if (/\b(men|his |grooming|beard)\b/.test(blob)) score += 0.2;
   }
-  if (audience === "unisex") score += 0.05;
+  if (audience === "unisex" || audience === "kids") score += 0.05;
 
   for (const interest of bounds.interests) {
     const key = interest
@@ -153,7 +177,7 @@ export function answerFitScore(product: Product, profile: RecipientProfile, feat
   if (bounds.vibe && blob.includes(bounds.vibe.toLowerCase().slice(0, 8))) score += 0.08;
   if (bounds.occasion && blob.includes(bounds.occasion.toLowerCase().split(/\s+/)[0] || "")) score += 0.05;
 
-  if (genderMismatch(product, bounds.gender)) score -= 2;
+  if (genderMismatch(product, bounds.gender, features.ageGroup)) score -= 2;
   return score;
 }
 

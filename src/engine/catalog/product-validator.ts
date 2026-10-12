@@ -209,7 +209,7 @@ export async function validateRecommendations(
     if (!priceInBudget(p.price, opts.features.budget)) continue;
     if (!p.ageGroups.includes(opts.features.ageGroup)) continue;
     if (ageInappropriate(p, opts.features)) continue;
-    if (genderMismatch(p, opts.features.gender)) {
+    if (genderMismatch(p, opts.features.gender, opts.features.ageGroup)) {
       engineWarn("engine: dropping gender-mismatched gift", p.title);
       continue;
     }
@@ -308,7 +308,7 @@ export function catalogEligible(product: Product, features: ProfileFeatures): bo
   if (!priceInBudget(product.price, features.budget)) return false;
   if (!product.ageGroups.includes(features.ageGroup)) return false;
   if (ageInappropriate(product, features)) return false;
-  if (genderMismatch(product, features.gender)) return false;
+  if (genderMismatch(product, features.gender, features.ageGroup)) return false;
   if (isAvoidedGiftCategory(product)) return false;
   if (isAmazonSearchUrl(product.buyUrl)) return false;
   const asin = extractAsin(product.buyUrl);

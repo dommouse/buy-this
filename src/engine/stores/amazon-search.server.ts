@@ -2,8 +2,8 @@ import { callClaude, extractJsonObject } from "../ai/claude-client.server";
 import { amazonAsinUrl } from "../affiliates/amazon";
 import { amazonAsinImageUrl } from "../catalog/product-images";
 import { engineConfig } from "../config";
-import { normalizeAudience } from "../features/fit";
-import type { GiftType, Slot } from "../types";
+import { genderSearchCue, normalizeAudience } from "../features/fit";
+import type { AgeGroup, GiftType, Slot } from "../types";
 import { engineLog, engineWarn } from "../utils/logger";
 import type { StoreProduct, StoreSearchAdapter, StoreSearchRequest } from "./types";
 
@@ -40,9 +40,15 @@ function parseProductRow(
   if (audience === "unknown") {
     audience = normalizeAudience(`${row.title ?? ""} ${row.description ?? ""} ${(row.tags ?? []).join(" ")}`);
   }
-  // Hard gender gate at parse time when questionnaire answered.
-  if (req.gender === "woman" && audience === "men") return null;
-  if (req.gender === "man" && audience === "women") return null;
+  // Hard gender gate — for kids, only block adult opposite-gender products.
+  const ageGroup: AgeGroup = req.ageGroup;
+  if (ageGroup === "child" || ageGroup === "teen") {
+    if (req.gender === "woman" && audience === "men") return null;
+    if (req.gender === "man" && audience === "women") return null;
+  } else {
+    if (req.gender === "woman" && audience === "men") return null;
+    if (req.gender === "man" && audience === "women") return null;
+  }
 
   seen.add(asin);
   const giftType: GiftType =
@@ -79,11 +85,13 @@ function parseProductRow(
  */
 async function searchViaClaudePhrase(req: StoreSearchRequest): Promise<StoreProduct[]> {
   const limit = Math.min(8, Math.max(4, req.limit ?? 6));
+  const who = genderSearchCue(req.ageGroup, req.gender ?? "unspecified");
   const genderRule =
-    req.gender && req.gender !== "unspecified" && req.gender !== "nonbinary"
-      ? `GENDER BOUND: recipient is a ${req.gender}. Prefer products clearly suitable for a ${req.gender}. ` +
-        `Do NOT return products aimed only at the opposite gender. Unisex is fine.`
-      : "GENDER: not specified — prefer unisex / gender-neutral gifts.";
+    who && (req.ageGroup === "child" || req.ageGroup === "teen")
+      ? `GENDER/AGE: recipient is a ${req.ageGroup}. Prefer products ${who}. Use audience=kids. NEVER adult "for men/women" gifts.`
+      : who
+        ? `GENDER BOUND: prefer products ${who}. Do NOT return opposite-gender-only items. Unisex is fine.`
+        : "GENDER: not specified — prefer unisex / gender-neutral gifts.";
 
   const system =
     "You resolve gift SEARCH PHRASES into real currently-buyable Amazon.com products. " +
@@ -99,7 +107,7 @@ async function searchViaClaudePhrase(req: StoreSearchRequest): Promise<StoreProd
       ? `NEVER reuse these ASINs (already used): ${req.excludeIds.join(", ")}. `
       : "") +
     "REQUIRED on every product: audience = women|men|unisex|kids (who the product is FOR). " +
-    "Example: a ladies hairbrush → audience=women; never suggest it for men. " +
+    "Kids toys → audience=kids. Ladies hairbrush → audience=women (never for men). " +
     "Return ONLY JSON: {\"products\":[{\"title\":\"...\",\"description\":\"max 40 words\",\"category\":\"...\",\"price\":number,\"asin\":\"B0XXXXXXXX\",\"giftType\":\"physical|experience|giftcard\",\"audience\":\"women|men|unisex|kids\",\"tags\":[\"...\"]}]}.";
 
   const prompt = JSON.stringify({
@@ -168,10 +176,13 @@ export async function searchAmazonAllSlots(input: {
   perSlotLimit?: number;
 }): Promise<Map<Slot, StoreProduct[]>> {
   const perSlot = Math.min(6, Math.max(3, input.perSlotLimit ?? 4));
+  const who = genderSearchCue(input.ageGroup, input.gender ?? "unspecified");
   const genderRule =
-    input.gender && input.gender !== "unspecified" && input.gender !== "nonbinary"
-      ? `GENDER: recipient is a ${input.gender}. Prefer suitable gifts; no opposite-gender-only items.`
-      : "GENDER: not specified — prefer unisex.";
+    who && (input.ageGroup === "child" || input.ageGroup === "teen")
+      ? `GENDER/AGE: recipient is a ${input.ageGroup}. Prefer ${who}. audience=kids. NEVER adult men/women gifts.`
+      : who
+        ? `GENDER: prefer ${who}; no opposite-gender-only items.`
+        : "GENDER: prefer unisex.";
 
   engineLog("engine: batch searching all slots in one call");
 
@@ -181,11 +192,10 @@ export async function searchAmazonAllSlots(input: {
     `For EACH slot return up to ${perSlot} DISTINCT products. ASINs must be unique across ALL slots. ` +
     `BUDGET max when set; prefer mid-band. AGE must match. ${genderRule} ` +
     avoidedCategoryRule() +
-    "REQUIRED on every product: audience=women|men|unisex|kids (who it is FOR). " +
-    "A ladies brush / makeup / women's apparel → audience=women (never for men). Men's grooming → audience=men. " +
-    "If questionnaire gender is set, prefer matching audience; unisex is always OK. " +
-    "Return ONLY JSON: " +
-    '{"tip":"max 28 words presentation tip","slots":[{"slot":"The One|The Wow|The Smart Pick|The Wildcard","products":[{"title":"...","description":"max 30 words","category":"...","price":number,"asin":"B0XXXXXXXX","giftType":"physical|experience|giftcard","audience":"women|men|unisex|kids","tags":["..."]}]}]}';
+    "REQUIRED on every product: audience=women|men|unisex|kids. " +
+    "Kids toys → audience=kids. Ladies brush → audience=women (never for men). " +
+    "Keep descriptions short. Return ONLY JSON: " +
+    '{"tip":"max 20 words","slots":[{"slot":"The One|The Wow|The Smart Pick|The Wildcard","products":[{"title":"...","description":"max 20 words","category":"...","price":number,"asin":"B0XXXXXXXX","giftType":"physical|experience|giftcard","audience":"women|men|unisex|kids","tags":["..."]}]}]}';
 
   const prompt = JSON.stringify({
     bounds: {
@@ -193,6 +203,7 @@ export async function searchAmazonAllSlots(input: {
       ageGroup: input.ageGroup,
       ageRange: input.ageRange || null,
       gender: input.gender || "unspecified",
+      genderCue: who,
       relationship: input.relationship || null,
       occasion: input.occasion || null,
       interests: input.interests || [],
@@ -202,7 +213,8 @@ export async function searchAmazonAllSlots(input: {
     marketplace: engineConfig.amazon.marketplace,
   });
 
-  const text = await callClaude(system, prompt, 35_000);
+  // Longer timeout — batch call is the heavy step; abort previously emptied results.
+  const text = await callClaude(system, prompt, 55_000);
   const raw = extractJsonObject(text);
   const bySlot = new Map<Slot, StoreProduct[]>();
   for (const s of input.slots) bySlot.set(s.slot, []);

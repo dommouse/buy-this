@@ -1,6 +1,6 @@
 import { callClaude, extractJsonObject } from "../ai/claude-client.server";
 import { engineConfig } from "../config";
-import { answerBounds } from "../features/fit";
+import { answerBounds, genderSearchCue } from "../features/fit";
 import type { ProfileFeatures } from "../features/profile";
 import { SLOTS } from "../scoring/ranker";
 import type { RecipientProfile, Slot } from "../types";
@@ -46,10 +46,12 @@ export async function buildSlotPhrases(input: {
   const { profile, features } = input;
   const bounds = answerBounds(profile, features);
   const budget = budgetHint(features, profile.budget);
-  const genderCue =
-    bounds.genderLabel != null
-      ? `Include gender cue "${bounds.genderLabel === "woman" ? "for women" : bounds.genderLabel === "man" ? "for men" : "unisex"}" in every phrase.`
-      : "Gender was not selected — keep phrases gender-neutral / unisex.";
+  const whoCue = genderSearchCue(features.ageGroup, bounds.gender);
+  const genderCue = whoCue
+    ? features.ageGroup === "child" || features.ageGroup === "teen"
+      ? `CRITICAL: recipient is a ${features.ageGroup} (age ${bounds.ageRange}). Include "${whoCue}" in phrases. NEVER say "for men" or "for women" for kids/teens.`
+      : `Include gender cue "${whoCue}" in every phrase.`
+    : "Gender was not selected — keep phrases gender-neutral / unisex.";
 
   const system =
     "You are Dominique, keyword brain for BUY THIS. " +
@@ -58,7 +60,9 @@ export async function buildSlotPhrases(input: {
     `age (${bounds.ageRange || bounds.ageGroup}), budget ("${budget}"), and gender when answered. ` +
     `${genderCue} ` +
     `Also weave relationship, occasion, vibe, and top interests. Year ${YEAR} when it helps. ` +
-    "Example: trending kitchen gadget for women 30s under 100 birthday. " +
+    (features.ageGroup === "child"
+      ? `Example: creative building toys for boys ages 3-5 under 25 birthday. `
+      : "Example: trending kitchen gadget for women 30s under 100 birthday. ") +
     "Each of the 4 slots needs a DISTINCT product ANGLE (different category/interest) so results do not repeat. " +
     "Never suggest filler gifts (mugs, socks). " +
     `NEVER suggest these avoided categories: ${avoidedLabels()}. ` +
@@ -101,7 +105,7 @@ export async function buildSlotPhrases(input: {
       .trim()
       .slice(0, 120);
     if (!slot || !phrase) continue;
-    phrase = ensureBoundCues(phrase, bounds, budget);
+    phrase = ensureBoundCues(phrase, bounds, budget, features.ageGroup);
     bySlot.set(slot, { slot, phrase, angle: String(row.angle ?? "").slice(0, 80), pivotCount: 0 });
   }
 
@@ -113,17 +117,18 @@ export async function buildSlotPhrases(input: {
       out.push(existing);
       continue;
     }
-    const interest = profile.interests[0] || profile.vibe || "gift";
-    const who = [
-      bounds.genderLabel === "woman" ? "for women" : bounds.genderLabel === "man" ? "for men" : "",
-      features.ageRange || features.ageGroup,
-    ]
+    const interest =
+      profile.interests[0] ||
+      profile.vibe ||
+      (features.ageGroup === "child" ? "toys" : "gift");
+    const who = [genderSearchCue(features.ageGroup, bounds.gender), features.ageRange || features.ageGroup]
       .filter(Boolean)
       .join(" ");
     const phrase = ensureBoundCues(
       `${interest} ${who} ${profile.occasion} ${budget} ${YEAR}`.replace(/\s+/g, " ").trim(),
       bounds,
       budget,
+      features.ageGroup,
     );
     out.push({
       slot,
@@ -140,18 +145,28 @@ function ensureBoundCues(
   phrase: string,
   bounds: ReturnType<typeof answerBounds>,
   budget: string,
+  ageGroup: import("../types").AgeGroup = "adult",
 ): string {
-  let p = phrase;
+  let p = phrase
+    // Strip adult gender cues wrongly applied to kids (e.g. "toys for men ages 3-5").
+    .replace(/\bfor men\b/gi, ageGroup === "child" || ageGroup === "teen" ? "for boys" : "for men")
+    .replace(/\bfor women\b/gi, ageGroup === "child" || ageGroup === "teen" ? "for girls" : "for women");
   const lower = p.toLowerCase();
-  if (bounds.genderLabel === "woman" && !/\b(women|woman|ladies|female|her)\b/i.test(lower)) {
-    p = `${p} for women`;
-  } else if (bounds.genderLabel === "man" && !/\b(men|man|male|him)\b/i.test(lower)) {
-    p = `${p} for men`;
+  const cue = genderSearchCue(ageGroup, bounds.gender);
+  if (cue && !lower.includes(cue.toLowerCase())) {
+    if (ageGroup === "child" || ageGroup === "teen") {
+      if (cue.includes("girl") && !/\b(girl|girls)\b/i.test(lower)) p = `${p} ${cue}`;
+      if (cue.includes("boy") && !/\b(boy|boys)\b/i.test(lower)) p = `${p} ${cue}`;
+    } else if (bounds.genderLabel === "woman" && !/\b(women|woman|ladies|female)\b/i.test(lower)) {
+      p = `${p} ${cue}`;
+    } else if (bounds.genderLabel === "man" && !/\b(men|man|male)\b/i.test(lower)) {
+      p = `${p} ${cue}`;
+    }
   }
-  if (bounds.ageRange && !lower.includes(bounds.ageRange.toLowerCase())) {
+  if (bounds.ageRange && !p.toLowerCase().includes(bounds.ageRange.toLowerCase())) {
     p = `${p} ${bounds.ageRange}`;
   }
-  if (budget && !/\bunder\s+\d+/i.test(lower) && !lower.includes(budget.toLowerCase())) {
+  if (budget && !/\bunder\s+\d+/i.test(p) && !p.toLowerCase().includes(budget.toLowerCase())) {
     p = `${p} ${budget}`;
   }
   return p.replace(/\s+/g, " ").trim().slice(0, 140);
@@ -201,7 +216,7 @@ export async function pivotBlockedPhrase(input: {
     .trim()
     .slice(0, 120);
   if (!phrase) throw new Error("Claude pivot returned empty phrase");
-  phrase = ensureBoundCues(phrase, bounds, budget);
+  phrase = ensureBoundCues(phrase, bounds, budget, features.ageGroup);
   return {
     slot: blocked.slot,
     phrase,

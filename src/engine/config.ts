@@ -151,7 +151,8 @@ export const engineConfig = {
   recommendationCount: envInt("ENGINE_RECOMMENDATION_COUNT", 12),
   /** Client page size hint for results pagination. */
   pageSize: envInt("ENGINE_PAGE_SIZE", 4),
-  maxRecommendationMs: envInt("ENGINE_MAX_RECOMMENDATION_MS", 60_000),
+  /** Per Claude call timeout — batch search needs headroom on slow networks. */
+  maxRecommendationMs: envInt("ENGINE_MAX_RECOMMENDATION_MS", 90_000),
 
   /** Legacy Lovable gateway re-ranker (catalog-hybrid only). */
   lovableApiKey: engineEnv("LOVABLE_API_KEY"),
