@@ -90,7 +90,10 @@ export function toUserProgress(message: string): string | null {
   }
 
   // Picking / validation
-  if (/picking best|slot pick|curating/i.test(m)) return "Choosing The One, The Wow, Smart Pick & Wildcard…";
+  if (/picking best|slot pick|curating|answer fit \+ trending/i.test(m)) {
+    return "Choosing The One, The Wow, Smart Pick & Wildcard (fit + what’s trending)…";
+  }
+  if (/training reset|cold-start/i.test(m)) return "Starting fresh with a clean gift brain…";
   if (/final validation|keyword picks failed/i.test(m)) {
     if (/failed/i.test(m)) return "Double-checking links — swapping any that didn’t pass…";
     return "Final quality check on every BUY THIS link…";

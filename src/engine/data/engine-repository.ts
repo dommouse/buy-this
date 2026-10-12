@@ -7,6 +7,7 @@ import { amazonAsinUrl, withAmazonTag } from "../affiliates/amazon";
 import { extractAsin } from "../catalog/product-images";
 import { isAmazonPdpUrl, isAmazonSearchUrl } from "../catalog/product-validator";
 import { engineConfig } from "../config";
+import { normalizeAudience } from "../features/fit";
 import type { Product, ProductStats, Recommendation } from "../types";
 import { engineWarn } from "../utils/logger";
 
@@ -50,6 +51,7 @@ type ProductRow = {
   tags: string[] | null;
   age_groups: string[] | null;
   gift_type: string;
+  attributes: Record<string, unknown> | null;
   image_url: string | null;
   buy_url: string;
   provider: string;
@@ -89,6 +91,14 @@ export async function loadProducts(): Promise<Product[]> {
 }
 
 function rowToProduct(r: ProductRow): Product {
+  const tags = r.tags ?? [];
+  const attrAudience = normalizeAudience(
+    typeof r.attributes?.["audience"] === "string" ? String(r.attributes["audience"]) : "",
+  );
+  const audience =
+    attrAudience !== "unknown"
+      ? attrAudience
+      : normalizeAudience(`${r.title} ${r.description ?? ""} ${tags.join(" ")}`);
   return {
     id: r.id,
     title: r.title,
@@ -96,9 +106,10 @@ function rowToProduct(r: ProductRow): Product {
     category: r.category ?? "Other",
     price: Number(r.price),
     currency: r.currency,
-    tags: r.tags ?? [],
+    tags,
     ageGroups: (r.age_groups ?? ["adult"]) as Product["ageGroups"],
     giftType: r.gift_type as Product["giftType"],
+    audience,
     imageUrl: r.image_url,
     buyUrl: r.buy_url,
     provider: r.provider,
@@ -119,6 +130,7 @@ export async function upsertSuggestedProducts(items: Recommendation[]) {
     tags: p.tags,
     age_groups: p.ageGroups,
     gift_type: p.giftType,
+    attributes: { audience: p.audience || "unknown" },
     image_url: p.imageUrl,
     buy_url: p.buyUrl,
     product_url: p.buyUrl,

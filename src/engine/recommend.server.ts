@@ -142,6 +142,7 @@ async function recommendInner(
         profile,
         features,
         sessionId: ctx.sessionId,
+        statsByProduct: stats,
       });
       if (keyed?.items.length) {
         let items = keyed.items;

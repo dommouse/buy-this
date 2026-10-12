@@ -1,5 +1,6 @@
-import type { AgeGroup, GiftType, Product } from "../types";
+import { normalizeAudience } from "../features/fit";
 import type { GenderFit } from "../features/fit";
+import type { AgeGroup, GenderAudience, GiftType, Product } from "../types";
 
 /** Normalized product returned by any store adapter (Amazon today, Nordstrom/Etsy/… later). */
 export type StoreProduct = {
@@ -15,6 +16,8 @@ export type StoreProduct = {
   giftType: GiftType;
   ageGroups: AgeGroup[];
   tags: string[];
+  /** Who this product is for — women / men / unisex / kids / unknown. */
+  audience: GenderAudience;
 };
 
 /** Questionnaire bounds + phrase for a store search. */
@@ -44,6 +47,11 @@ export type StoreSearchAdapter = {
 };
 
 export function storeProductToProduct(p: StoreProduct): Product {
+  const audience = p.audience && p.audience !== "unknown" ? p.audience : normalizeAudience(p.tags.join(" "));
+  const tags = [...p.tags];
+  if (audience !== "unknown" && !tags.some((t) => t.toLowerCase().startsWith("audience:"))) {
+    tags.push(`audience:${audience}`);
+  }
   return {
     id: `${p.storeId}-${p.externalId}`.toLowerCase().replace(/[^a-z0-9-]+/g, "-"),
     title: p.title,
@@ -51,9 +59,10 @@ export function storeProductToProduct(p: StoreProduct): Product {
     category: p.category,
     price: p.price,
     currency: p.currency || "USD",
-    tags: p.tags,
+    tags,
     ageGroups: p.ageGroups,
     giftType: p.giftType,
+    audience,
     imageUrl: p.imageUrl,
     buyUrl: p.buyUrl,
     provider: p.storeId,

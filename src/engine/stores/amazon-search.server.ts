@@ -2,6 +2,7 @@ import { callClaude, extractJsonObject } from "../ai/claude-client.server";
 import { amazonAsinUrl } from "../affiliates/amazon";
 import { amazonAsinImageUrl } from "../catalog/product-images";
 import { engineConfig } from "../config";
+import { normalizeAudience } from "../features/fit";
 import type { GiftType, Slot } from "../types";
 import { engineLog, engineWarn } from "../utils/logger";
 import type { StoreProduct, StoreSearchAdapter, StoreSearchRequest } from "./types";
@@ -20,6 +21,7 @@ function parseProductRow(
     asin?: string;
     giftType?: string;
     tags?: string[];
+    audience?: string;
   },
   req: Pick<StoreSearchRequest, "maxPriceUsd" | "minPriceUsd" | "ageGroup" | "gender" | "excludeIds">,
   seen: Set<string>,
@@ -33,14 +35,23 @@ function parseProductRow(
   if (!Number.isFinite(price) || price < 0) return null;
   if (req.maxPriceUsd != null && price > req.maxPriceUsd) return null;
   if (req.minPriceUsd != null && req.minPriceUsd > 0 && price < req.minPriceUsd * 0.7) return null;
+
+  let audience = normalizeAudience(row.audience);
+  if (audience === "unknown") {
+    audience = normalizeAudience(`${row.title ?? ""} ${row.description ?? ""} ${(row.tags ?? []).join(" ")}`);
+  }
+  // Hard gender gate at parse time when questionnaire answered.
+  if (req.gender === "woman" && audience === "men") return null;
+  if (req.gender === "man" && audience === "women") return null;
+
   seen.add(asin);
   const giftType: GiftType =
     row.giftType === "experience" || row.giftType === "giftcard" || row.giftType === "physical"
       ? row.giftType
       : "physical";
   const tags = Array.isArray(row.tags) ? row.tags.map(String).slice(0, 12) : [];
-  if (req.gender && req.gender !== "unspecified" && !tags.some((t) => /women|men|unisex|gender/i.test(t))) {
-    tags.push(req.gender === "woman" ? "women" : req.gender === "man" ? "men" : "unisex");
+  if (audience !== "unknown" && !tags.some((t) => /audience:|women|men|unisex/i.test(t))) {
+    tags.push(`audience:${audience}`);
   }
   return {
     storeId: "amazon",
@@ -55,6 +66,7 @@ function parseProductRow(
     giftType,
     ageGroups: [req.ageGroup],
     tags,
+    audience,
   };
 }
 
@@ -86,8 +98,9 @@ async function searchViaClaudePhrase(req: StoreSearchRequest): Promise<StoreProd
     (req.excludeIds?.length
       ? `NEVER reuse these ASINs (already used): ${req.excludeIds.join(", ")}. `
       : "") +
-    "Tag products with gender cues when relevant (e.g. women, men, unisex) in tags. " +
-    "Return ONLY JSON: {\"products\":[{\"title\":\"...\",\"description\":\"max 40 words\",\"category\":\"...\",\"price\":number,\"asin\":\"B0XXXXXXXX\",\"giftType\":\"physical|experience|giftcard\",\"tags\":[\"...\"]}]}.";
+    "REQUIRED on every product: audience = women|men|unisex|kids (who the product is FOR). " +
+    "Example: a ladies hairbrush → audience=women; never suggest it for men. " +
+    "Return ONLY JSON: {\"products\":[{\"title\":\"...\",\"description\":\"max 40 words\",\"category\":\"...\",\"price\":number,\"asin\":\"B0XXXXXXXX\",\"giftType\":\"physical|experience|giftcard\",\"audience\":\"women|men|unisex|kids\",\"tags\":[\"...\"]}]}.";
 
   const prompt = JSON.stringify({
     searchPhrase: req.phrase,
@@ -116,6 +129,7 @@ async function searchViaClaudePhrase(req: StoreSearchRequest): Promise<StoreProd
       price?: number;
       asin?: string;
       giftType?: string;
+      audience?: string;
       tags?: string[];
     }[];
   };
@@ -167,8 +181,11 @@ export async function searchAmazonAllSlots(input: {
     `For EACH slot return up to ${perSlot} DISTINCT products. ASINs must be unique across ALL slots. ` +
     `BUDGET max when set; prefer mid-band. AGE must match. ${genderRule} ` +
     avoidedCategoryRule() +
+    "REQUIRED on every product: audience=women|men|unisex|kids (who it is FOR). " +
+    "A ladies brush / makeup / women's apparel → audience=women (never for men). Men's grooming → audience=men. " +
+    "If questionnaire gender is set, prefer matching audience; unisex is always OK. " +
     "Return ONLY JSON: " +
-    '{"tip":"max 28 words presentation tip","slots":[{"slot":"The One|The Wow|The Smart Pick|The Wildcard","products":[{"title":"...","description":"max 30 words","category":"...","price":number,"asin":"B0XXXXXXXX","giftType":"physical|experience|giftcard","tags":["..."]}]}]}';
+    '{"tip":"max 28 words presentation tip","slots":[{"slot":"The One|The Wow|The Smart Pick|The Wildcard","products":[{"title":"...","description":"max 30 words","category":"...","price":number,"asin":"B0XXXXXXXX","giftType":"physical|experience|giftcard","audience":"women|men|unisex|kids","tags":["..."]}]}]}';
 
   const prompt = JSON.stringify({
     bounds: {
@@ -202,6 +219,7 @@ export async function searchAmazonAllSlots(input: {
         price?: number;
         asin?: string;
         giftType?: string;
+        audience?: string;
         tags?: string[];
       }[];
     }[];

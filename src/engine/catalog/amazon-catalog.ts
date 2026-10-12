@@ -47,6 +47,7 @@ export const amazonCatalog: Product[] = rows.map(
     tags,
     ageGroups,
     giftType,
+    audience: "unisex" as const,
     imageUrl: amazonAsinImageUrl(asin),
     buyUrl: amazonAsinUrl(asin),
     provider: "amazon",

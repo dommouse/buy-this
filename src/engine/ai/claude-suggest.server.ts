@@ -6,6 +6,7 @@ import { isAmazonUrl, toBuyUrl } from "../affiliates/links";
 import { amazonAsinImageUrl, extractAsin } from "../catalog/product-images";
 import { isAmazonPdpUrl, validateRecommendations } from "../catalog/product-validator";
 import { engineConfig } from "../config";
+import { normalizeAudience } from "../features/fit";
 import type { ProfileFeatures } from "../features/profile";
 import type { AgeGroup, GiftType, Product, RecipientProfile, Recommendation } from "../types";
 import { engineWarn } from "../utils/logger";
@@ -34,6 +35,8 @@ type ClaudeGift = {
   reason: string;
   tags?: string[];
   giftType?: GiftType;
+  /** Who the product is for: women | men | unisex | kids */
+  audience?: string;
   searchQuery?: string;
   merchantUrl?: string;
   imageUrl?: string | null;
@@ -123,7 +126,8 @@ function buildSystem(
       : "Provide a shoppable https merchantUrl for every gift. ") +
     "Do not invent random image URLs. Leave imageUrl null — we attach Amazon images when ASIN is verified. " +
     'Each reason MUST name a concrete questionnaire answer (interest, vibe, age, occasion, or relationship) — e.g. "Because they love Reading and this fits a birthday for ages 6-8." ' +
-    `Return ONLY JSON: {"tip":"max 30 words","gifts":[{"title":"...","description":"max 40 words","category":"...","price":number,"reason":"Because they… (max 28 words, cite their answers)","tags":["interest or vibe from questionnaire"],"giftType":"physical|experience|giftcard","asin":"B0XXXXXXXX","searchQuery":"brand + product","merchantUrl":null}]}.`
+    "REQUIRED on every gift: audience=women|men|unisex|kids (who the product is FOR — e.g. ladies brush → women). " +
+    `Return ONLY JSON: {"tip":"max 30 words","gifts":[{"title":"...","description":"max 40 words","category":"...","price":number,"reason":"Because they… (max 28 words, cite their answers)","tags":["interest or vibe from questionnaire"],"giftType":"physical|experience|giftcard","audience":"women|men|unisex|kids","asin":"B0XXXXXXXX","searchQuery":"brand + product","merchantUrl":null}]}.`
   );
 }
 
@@ -316,6 +320,13 @@ export function parseClaudeGifts(
 
       const buyUrl = toBuyUrl(merchant, { customId: sessionId });
       const tags = Array.isArray(g.tags) ? g.tags.map(String).slice(0, 12) : [];
+      let audience = normalizeAudience(g.audience);
+      if (audience === "unknown") {
+        audience = normalizeAudience(`${g.title} ${g.description ?? ""} ${tags.join(" ")}`);
+      }
+      if (audience !== "unknown" && !tags.some((t) => /audience:/i.test(t))) {
+        tags.push(`audience:${audience}`);
+      }
       const product: Product = {
         id: asin ? `amz-${asin.toLowerCase()}` : `claude-${slugify(g.title)}`,
         title: String(g.title).slice(0, 120),
@@ -326,6 +337,7 @@ export function parseClaudeGifts(
         tags,
         ageGroups: [ageGroup],
         giftType,
+        audience,
         imageUrl: asin ? amazonAsinImageUrl(asin, 300) : null,
         buyUrl,
         provider: asin || preferAmazon ? "amazon" : "claude",

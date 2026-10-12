@@ -1,5 +1,7 @@
 export type AgeGroup = "child" | "teen" | "adult";
 export type GiftType = "physical" | "experience" | "giftcard";
+/** Who the product is primarily for — required from AI catalog resolution when known. */
+export type GenderAudience = "women" | "men" | "unisex" | "kids" | "unknown";
 
 export type Product = {
   id: string;
@@ -11,6 +13,8 @@ export type Product = {
   tags: string[];
   ageGroups: AgeGroup[];
   giftType: GiftType;
+  /** Explicit gender audience from catalog/AI (preferred over tag heuristics). */
+  audience: GenderAudience;
   imageUrl: string | null;
   buyUrl: string;
   provider: string;

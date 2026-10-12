@@ -1,13 +1,13 @@
 import { AiUnavailableError } from "./ai/claude-client.server";
 import { enrichProductImages, extractAsin } from "./catalog/product-images";
 import { validateRecommendations } from "./catalog/product-validator";
-import { answerBounds, rankByAnswerFit } from "./features/fit";
+import { answerBounds, genderMismatch, rankByAnswerFit, trendingFitScore } from "./features/fit";
 import type { ProfileFeatures } from "./features/profile";
 import { buildSlotPhrases, filterAndPivotPhrases } from "./keywords";
 import { formatPickReason, SLOTS } from "./scoring/ranker";
 import { searchAmazonAllSlots, takeLastBatchTip } from "./stores/amazon-search.server";
 import { getActiveStoreAdapters, storeProductToProduct } from "./stores";
-import type { Product, RecipientProfile, Recommendation, Slot } from "./types";
+import type { Product, ProductStats, RecipientProfile, Recommendation, Slot } from "./types";
 import { engineLog, engineWarn } from "./utils/logger";
 
 export type KeywordSearchOutcome = {
@@ -16,7 +16,7 @@ export type KeywordSearchOutcome = {
 };
 
 /**
- * Fast local pick: best unused product per slot by answer fit.
+ * Fast local pick: best unused product per slot by answer fit + trending stats.
  * Fills empty slots from the leftover pool so we still return 4 gifts.
  */
 function pickFourSlots(
@@ -24,6 +24,7 @@ function pickFourSlots(
   profile: RecipientProfile,
   features: ProfileFeatures,
   phrases: { slot: Slot; phrase: string; angle: string }[],
+  statsByProduct?: Map<string, ProductStats[]>,
 ): Recommendation[] {
   const used = new Set<string>();
   const usedTitles = new Set<string>();
@@ -31,7 +32,8 @@ function pickFourSlots(
   const phraseBySlot = new Map(phrases.map((p) => [p.slot, p]));
 
   for (const slot of SLOTS) {
-    const ranked = rankByAnswerFit(bySlot.get(slot) ?? [], profile, features);
+    const pool = (bySlot.get(slot) ?? []).filter((p) => !genderMismatch(p, features.gender));
+    const ranked = rankByAnswerFit(pool, profile, features, statsByProduct);
     const product = ranked.find((p) => {
       const asin = extractAsin(p.buyUrl)?.toUpperCase() || p.id;
       const title = p.title.toLowerCase();
@@ -42,11 +44,14 @@ function pickFourSlots(
     used.add(asin);
     usedTitles.add(product.title.toLowerCase());
     const phrase = phraseBySlot.get(slot);
+    const score = Number(
+      Math.min(0.99, 0.55 + trendingFitScore(product, profile, features, statsByProduct) * 0.12).toFixed(4),
+    );
     items.push({
       slot,
       rank: items.length + 1,
       product,
-      score: Number(Math.max(0.55, 0.95 - items.length * 0.05).toFixed(4)),
+      score,
       reason: formatPickReason(
         [`Because it matches their answers for ${phrase?.phrase || slot}`],
         phrase?.angle || "",
@@ -57,8 +62,12 @@ function pickFourSlots(
   // Fill missing slots from any leftover validated products.
   if (items.length < 4) {
     const pool: Product[] = [];
-    for (const list of bySlot.values()) pool.push(...list);
-    const ranked = rankByAnswerFit(pool, profile, features);
+    for (const list of bySlot.values()) {
+      for (const p of list) {
+        if (!genderMismatch(p, features.gender)) pool.push(p);
+      }
+    }
+    const ranked = rankByAnswerFit(pool, profile, features, statsByProduct);
     for (const slot of SLOTS) {
       if (items.some((i) => i.slot === slot)) continue;
       const product = ranked.find((p) => {
@@ -91,8 +100,10 @@ export async function keywordSearchRecommend(input: {
   profile: RecipientProfile;
   features: ProfileFeatures;
   sessionId: string | null;
+  /** Segment + global click/buy stats from training — ranks trending gifts higher. */
+  statsByProduct?: Map<string, ProductStats[]>;
 }): Promise<KeywordSearchOutcome | null> {
-  const { profile, features, sessionId } = input;
+  const { profile, features, sessionId, statsByProduct } = input;
   const bounds = answerBounds(profile, features);
 
   engineLog("engine: building search phrases");
@@ -214,12 +225,13 @@ export async function keywordSearchRecommend(input: {
     bySlot.set(item.slot as Slot, list);
   }
 
-  engineLog("engine: picking best gifts for 4 slots");
+  engineLog("engine: picking best gifts for 4 slots (answer fit + trending)");
   const picked = pickFourSlots(
     bySlot,
     profile,
     features,
     phrases.map((p) => ({ slot: p.slot, phrase: p.phrase, angle: p.angle })),
+    statsByProduct,
   );
 
   if (!picked.length) {

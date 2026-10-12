@@ -158,7 +158,7 @@ export const engineConfig = {
   lovableModel: engineEnv("ENGINE_LOVABLE_MODEL", "openai/gpt-6-astra"),
   lovableGatewayUrl: engineEnv("ENGINE_LOVABLE_GATEWAY_URL", "https://ai.gateway.lovable.dev/v1"),
 
-  featureVersion: engineEnv("ENGINE_FEATURE_VERSION", "f3"),
+  featureVersion: engineEnv("ENGINE_FEATURE_VERSION", "f4"),
   shortlistSize: envInt("ENGINE_SHORTLIST_SIZE", 12),
   weights: { content: 0.45, budget: 0.25, behavior: 0.2, popularity: 0.1 },
   behaviorConfidenceAt: envInt("ENGINE_BEHAVIOR_CONFIDENCE_AT", 50),

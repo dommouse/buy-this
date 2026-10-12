@@ -80,6 +80,7 @@ export const starterCatalog: Product[] = rows.map(([id, title, description, cate
   tags,
   ageGroups,
   giftType,
+  audience: "unisex" as const,
   imageUrl: null,
   // Search URLs are not valid BUY THIS targets — use amazon-catalog ASINs for shoppable fallbacks.
   buyUrl: "",
