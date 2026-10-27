@@ -69,15 +69,39 @@ function toProfile(answers: GiftAnswers) {
   return {
     relationship: answers.relationshipOther || answers.relationship || "",
     occasion: answers.occasionOther || answers.occasion || "",
-    ageRange: answers.ageRange || "",
+    ageRange: answers.ageRange || (answers.graduationLevel ? "20-39" : ""),
     gender: answers.gender || "",
-    vibe: answers.vibe || "",
+    vibe: answers.vibe || answers.teenStyle || answers.personality[0] || "",
     interests: answers.interests,
-    wants: answers.wants || "",
+    wants: answers.wants || answers.talkAbout || "",
     avoid: answers.avoid || "",
     budget: answers.budget || "",
     hasKids: answers.hasKids || "",
     giftType: answers.giftType || "",
+    path: answers.path || "",
+    personality: answers.personality,
+    parentType: answers.parentType || "",
+    helpWith: answers.helpWith || "",
+    firstBaby: answers.firstBaby || "",
+    childStage: answers.childStage || "",
+    familyNeed: answers.familyNeed || "",
+    character: answers.character || "",
+    funOrLearning: answers.funOrLearning || "",
+    teenStyle: answers.teenStyle || "",
+    wearUseDo: answers.wearUseDo || "",
+    talkAbout: answers.talkAbout || "",
+    practicalOrSpecial: answers.practicalOrSpecial || "",
+    feelSeen: answers.feelSeen || "",
+    howBig: answers.howBig || "",
+    professionPride: answers.professionPride || "",
+    howFeel: answers.howFeel || "",
+    knowThem: answers.knowThem || "",
+    favorites: answers.favorites || "",
+    entertain: answers.entertain || "",
+    homeType: answers.homeType || "",
+    neverBuy: answers.neverBuy || "",
+    graduationLevel: answers.graduationLevel || "",
+    photoDataUrl: answers.photo?.dataUrl ?? null,
   };
 }
 
@@ -119,7 +143,6 @@ function ResultsPage() {
   const [statusTrail, setStatusTrail] = useState<string[]>([]);
   const sessionIdRef = useRef(crypto.randomUUID());
   const bootstrappedRef = useRef(false);
-  const trackedRef = useRef(false);
   const searchIdRef = useRef(searchId);
 
   useEffect(() => {
@@ -134,7 +157,6 @@ function ResultsPage() {
     setResult(null);
     setLiveStatus(FALLBACK_THINKING);
     setStatusTrail([]);
-    trackedRef.current = false;
 
     let nextSearchId = searchIdRef.current;
     if (!nextSearchId) {
@@ -271,21 +293,7 @@ function ResultsPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps -- bootstrap once per answers visit
   }, [answers]);
 
-  // Log impressions once for the returned set.
-  useEffect(() => {
-    if (!result?.items.length || trackedRef.current) return;
-    trackedRef.current = true;
-    for (const item of result.items) {
-      trackInteraction({
-        type: "impression",
-        productId: item.product.id,
-        recommendationId: result.recommendationId,
-        searchId,
-        sessionId: sessionIdRef.current,
-        rank: item.rank,
-      });
-    }
-  }, [result, searchId]);
+  // Training is BUY THIS only — do not log suggestion impressions.
 
   const tip = result?.tip || defaultTip;
   const items = result?.items ?? [];
@@ -549,16 +557,9 @@ function GiftCard({
   }, [product.imageUrl, product.id]);
 
   const onBuy = () => {
+    // Gift Brain trains only on BUY THIS — not on suggestion impressions.
     trackInteraction({
       type: "buy_click",
-      productId: product.id,
-      recommendationId,
-      searchId,
-      sessionId,
-      rank: item.rank,
-    });
-    trackInteraction({
-      type: "click",
       productId: product.id,
       recommendationId,
       searchId,

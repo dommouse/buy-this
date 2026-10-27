@@ -49,6 +49,11 @@ export type ProductRow = {
   provider: string;
   popularity: number;
   active: boolean;
+  occasion: string[];
+  price_tier: string | null;
+  relationship: string[];
+  parent_type: string[];
+  wear_use_do: string | null;
   created_at: string;
   updated_at: string;
 };

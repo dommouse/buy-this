@@ -9,11 +9,13 @@ export function toUserProgress(message: string): string | null {
   // Recommend lifecycle
   if (/^recommend start/i.test(m)) return "Reading your answers…";
   if (/^disabled/i.test(m)) return "Gift brain is paused — trying a safe fallback…";
-  if (/keyword-search ok/i.test(m)) {
+  if (/gift brain ok|keyword-search ok/i.test(m)) {
     const n = m.match(/(\d+)\s*gifts/i)?.[1];
     return n ? `Locked in ${n} personalized picks.` : "Locked in your personalized picks.";
   }
-  if (/claude-suggest ok/i.test(m)) return "Gift ideas are ready.";
+  if (/gift brain start/i.test(m)) return "Gift brain is matching answers to real products…";
+  if (/gift brain memory recalled/i.test(m)) return "Reusing gifts that worked for similar shoppers…";
+  if (/gift brain searching Amazon/i.test(m)) return "Searching Amazon with your gift phrases…";
   if (/finalize strategy=/i.test(m)) {
     const n = m.match(/gifts=(\d+)/i)?.[1];
     return n ? `Wrapping up ${n} gift${n === "1" ? "" : "s"} for you…` : "Wrapping up your gift shortlist…";
@@ -119,7 +121,15 @@ export function toUserProgress(message: string): string | null {
   if (/dropping Amazon search URL|non-PDP|stripping/i.test(m)) {
     return "Keeping only real product pages — no search-result links…";
   }
-  if (/retrying Claude after TLS/i.test(m)) return "Reconnecting to the gift brain…";
+  if (/Amazon HTML blocked for all|Amazon HTML partial block|Amazon HTML search blocked/i.test(m)) {
+    return "Amazon search is restricted on this network — using our curated catalog instead…";
+  }
+  if (/resolving \d+ gifts without live|re-resolving \d+ dead ASIN|resolved “|replaced dead|curated catalog/i.test(m)) {
+    return "Matching gifts to live Amazon product pages…";
+  }
+  if (/could not resolve live ASIN|dead ASIN could not be replaced/i.test(m)) {
+    return "Skipping a gift we couldn’t verify as buyable…";
+  }
   if (/no store adapters/i.test(m)) return "Store search isn’t available — using a backup path…";
 
   // Generic fallbacks for unknown but user-safe lines

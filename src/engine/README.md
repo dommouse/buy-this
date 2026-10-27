@@ -1,60 +1,55 @@
-# AI Gift Recommendation Engine (`src/engine`)
+# Gift Brain (`src/engine`)
 
-Self-contained recommendation module. UI talks only to `getRecommendations` / `trackInteraction` from `src/engine/index.ts`.
+Self-contained recommendation engine for BUY THIS.
 
-## Flow (primary: `keyword-search`)
+**Search objects + hard filters are always local.** Claude is optional and only
+picks the final 4 + Gift Tips when `ENGINE_USE_AI=true`.
+
+## Flow
 
 ```text
-Questionnaire answers
+Path questionnaire (max 8 steps)
         ↓
-Keyword engine (store-agnostic)
-  • AI builds 4 search phrases (one per slot)
-  • Block list filter — blocked phrases must PIVOT (rethink), not soft-skip
+FilterSpec + 4 SearchObjects (3–5 keywords, category, 75–100% price wall)
         ↓
-Store adapters (pluggable)
-  • Amazon first (PA-API when keyed; phrase→ASIN resolver until then)
-  • Nordstrom / Etsy / Target / Macy's can plug in later without touching keywords
+Dual catalog
+  • curated / imported products (Dominique columns)
+  • Amazon HTML search (Creators API later)
         ↓
-AI picks best product per slot + presentation tip
+Hard filters (budget, blacklist, age, relationship)
+Soft drop: Wear → interests → personality (never drop budget/age/relationship/blacklist)
         ↓
-Validate live /dp/ASIN + budget/age gates + CDN images
+ENGINE_USE_AI? Claude final 4 + tips : local scoreGiftFit
         ↓
-Results page: 4 slots with BUY THIS
+BUY THIS links · train on buy_click only
 ```
 
-## Modes
+## Config
 
-| `ENGINE_MODE` | Behavior |
+| Env | Meaning |
 | --- | --- |
-| `keyword-search` (default) | Phrases → blocklist → store search → 4 slot picks. |
-| `claude-suggest` | Legacy: Claude invents gifts directly. |
-| `catalog-hybrid` | Score curated catalog, optional Lovable re-rank. |
+| `ENGINE_MODE=gift-brain` | Primary path |
+| `ENGINE_USE_AI=false` | Kill-switch for Claude final pick |
+| `ENGINE_CATALOG_MODE=both` | `both` \| `amazon` \| `local` |
+| `AMAZON_PARTNER_TAG` | Associates tag on `/dp/ASIN` |
 
-If the keyword path fails, the engine falls back to Claude invent / Amazon catalog so results never hard-fail.
+## Catalog import
+
+```bash
+npm run db:migrate
+npm run engine:import-catalog -- path/to/batch.csv
+```
+
+CSV columns: `id,title,price,buy_url,occasion,price_tier,relationship,parent_type,wear_use_do,age_groups,tags,...`
 
 ## Key modules
 
 | Path | Role |
 | --- | --- |
-| `keywords/` | Phrase builder + block list + pivot (no store knowledge) |
-| `stores/` | Pluggable search adapters (`amazon-search.server.ts`, registry) |
-| `keyword-recommend.server.ts` | Orchestrates keyword → search → pick |
-| `ai/slot-picker.server.ts` | Chooses best product per slot + tip |
-| `ai/claude-client.server.ts` | Shared Claude caller |
-| `catalog/product-validator.ts` | Live ASIN / budget / age gates |
-| `affiliates/*` | Associates / Skimlinks BUY THIS URLs |
-| `env.config.ts` | Live fallbacks when `.env` is missing |
-
-## Env
-
-- `ANTHROPIC_API_KEY` — Claude (phrases, pivot, store resolve, slot pick)
-- `AMAZON_PARTNER_TAG` — Associates store ID on `/dp/ASIN` links
-- `AMAZON_PAAPI_*` — optional live Amazon Product Advertising API
-- `ENGINE_MODE=keyword-search` — primary path
-- Keep `src/engine/env.config.ts` in sync for published Lovable builds
-
-## Adding a new store
-
-1. Implement `StoreSearchAdapter` in `stores/your-store.server.ts` (`search(phrase) → StoreProduct[]`).
-2. Register it in `stores/registry.ts`.
-3. Do **not** change the keyword engine.
+| `../questionnaire/` | Path-routed questions (edit copy in `config.ts`) |
+| `brain/search-object.ts` | 4 slot search objects |
+| `brain/filters.ts` | Catalog filter order + fallback |
+| `stores/curated-search.server.ts` | Local/import adapter |
+| `stores/amazon-search.server.ts` | Amazon HTML (+ Creators later) |
+| `ai/final-picker.server.ts` | Optional Claude final pick |
+| `keywords/blocklist.ts` | Dominique block rules in code |

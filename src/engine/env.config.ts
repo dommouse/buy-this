@@ -32,10 +32,11 @@ export const engineEnvDefaults: Record<string, string> = {
   ),
   SUPABASE_SERVICE_ROLE_KEY: u8("=QTL1RXQDRHcfdGWtZmYDJ2b5MlY4AnZx92aLhlR4VzX0VmcjV2cfJ2c"),
 
-  // Engine toggles
+  // Engine toggles — Gift Brain (local search; Claude final pick off by default)
   ENGINE_ENABLED: "true",
-  ENGINE_MODE: "keyword-search",
-  ENGINE_USE_AI: "true",
+  ENGINE_MODE: "gift-brain",
+  ENGINE_USE_AI: "false",
+  ENGINE_CATALOG_MODE: "both",
   ENGINE_RECOMMENDATION_COUNT: "12",
   ENGINE_PAGE_SIZE: "4",
   ENGINE_MAX_RECOMMENDATION_MS: "90000",
@@ -48,20 +49,16 @@ export const engineEnvDefaults: Record<string, string> = {
   // Live must verify TLS; local .env can set true for corporate proxies
   ENGINE_TLS_INSECURE: "false",
 
-  // Anthropic Claude
-  ANTHROPIC_API_KEY: u8(
-    "BF0ZSNFVJFTLR52SptWQuVTN1VWNQNnQwgEb2k2YTJ2Y0QlRy9FbBlTdoBjd1BDdPlXTzY1UPpFRVNWdIhDSy8UQQxUWUZFehRHZI91RupWZLh2MwQjS5cXQOZkbChVLzATawFWL05WYts2c",
-  ),
-  ENGINE_CLAUDE_MODEL: "claude-sonnet-4-5-20250929",
+  // Anthropic retired — Gift Brain does not call Claude
+  ANTHROPIC_API_KEY: "",
+  ENGINE_CLAUDE_MODEL: "",
 
-  // Lovable (gateway / publish tooling)
-  LOVABLE_API_KEY: u8(
-    "==wQPV2dORDchFGdM5WdT10NwcVTTBXZsZzNkZnV1oWTadnWiBVOt1mTEd3U00WThd1RD9UVJ9kezkDc2M0ZtR1ZOJzX29Gb",
-  ),
+  // Lovable project metadata (not used for gift ranking)
+  LOVABLE_API_KEY: "",
   LOVABLE_PROJECT_ID: "43b74c09-bd4a-4a58-b247-72273b098179",
   LOVABLE_GITHUB_REPO_URL: "https://github.com/dommouse/buy-this.git",
-  ENGINE_LOVABLE_MODEL: "openai/gpt-6-astra",
-  ENGINE_LOVABLE_GATEWAY_URL: "https://ai.gateway.lovable.dev/v1",
+  ENGINE_LOVABLE_MODEL: "",
+  ENGINE_LOVABLE_GATEWAY_URL: "",
 
   // Skimlinks
   SKIMLINKS_ENABLED: "false",

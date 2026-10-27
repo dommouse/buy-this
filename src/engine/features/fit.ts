@@ -1,15 +1,18 @@
 import { engineConfig } from "../config";
+import { answerSearchTokens } from "../keywords/interest-keywords";
 import type { ProfileFeatures } from "./profile";
 import type { AgeGroup, GenderAudience, Product, ProductStats, RecipientProfile } from "../types";
 
+/**
+ * Behavior from BUY THIS training only (impressions ≈ buy events after migration 0006).
+ */
 function localBehaviorScore(stats: ProductStats[] | undefined) {
   if (!stats?.length) return { score: 0, confidence: 0 };
-  const imp = stats.reduce((a, s) => a + s.impressions, 0);
-  const clk = stats.reduce((a, s) => a + s.clicks, 0);
-  const ctr = (clk + 1) / (imp + 10);
+  const buys = stats.reduce((a, s) => a + s.clicks, 0);
+  if (buys <= 0) return { score: 0, confidence: 0 };
   return {
-    score: Math.min(1, ctr * 4),
-    confidence: Math.min(1, imp / engineConfig.behaviorConfidenceAt),
+    score: Math.min(1, 0.35 + buys * 0.15),
+    confidence: Math.min(1, buys / Math.max(3, engineConfig.behaviorConfidenceAt / 10)),
   };
 }
 
@@ -167,15 +170,64 @@ export function answerFitScore(product: Product, profile: RecipientProfile, feat
   }
   if (audience === "unisex" || audience === "kids") score += 0.05;
 
-  for (const interest of bounds.interests) {
-    const key = interest
-      .toLowerCase()
-      .split(/[^a-z0-9]+/)
-      .filter((w) => w.length > 3);
-    if (key.some((w) => blob.includes(w))) score += 0.12;
+  // Match Amazon product text against interest/personality→keyword tokens.
+  const tokens = answerSearchTokens(
+    bounds.interests,
+    bounds.vibe || features.personality[0] || "",
+    bounds.wants || profile.talkAbout || "",
+    features.personality,
+  );
+  let interestHits = 0;
+  for (const token of tokens) {
+    if (token.length < 3) continue;
+    // Multi-word: require full phrase or all significant words.
+    if (token.includes(" ")) {
+      if (blob.includes(token)) {
+        score += 0.28;
+        interestHits += 1;
+      } else {
+        const words = token.split(/\s+/).filter((w) => w.length > 3);
+        if (words.length && words.every((w) => blob.includes(w))) {
+          score += 0.16;
+          interestHits += 1;
+        }
+      }
+    } else if (blob.includes(token)) {
+      score += 0.12;
+      interestHits += 1;
+    }
   }
-  if (bounds.vibe && blob.includes(bounds.vibe.toLowerCase().slice(0, 8))) score += 0.08;
-  if (bounds.occasion && blob.includes(bounds.occasion.toLowerCase().split(/\s+/)[0] || "")) score += 0.05;
+  // Penalize products that match none of the answer keywords.
+  if (tokens.length >= 2 && interestHits === 0) score -= 0.45;
+
+  // "Creative" personality ≠ creative-writing how-to books unless they asked for reading.
+  const wantsReading =
+    features.personality.some((p) => /read|book|intellectual/i.test(p)) ||
+    bounds.interests.some((i) => /read|book/i.test(i)) ||
+    /book|read|novel/i.test(bounds.wants);
+  if (
+    !wantsReading &&
+    (/books?/i.test(product.category) ||
+      /\b(how to|workbook|for writers|creative writing|bestseller and create)\b/i.test(blob))
+  ) {
+    score -= 0.85;
+  }
+
+  // Occasion cue — Mother's Day etc. should prefer tagged / spa-beauty gifts.
+  if (bounds.occasion) {
+    const occ = bounds.occasion.toLowerCase();
+    if (product.occasions?.some((o) => o.toLowerCase().includes(occ.replace(/'s day/, ""))) || blob.includes(occ)) {
+      score += 0.2;
+    }
+    if (/mother'?s day/i.test(bounds.occasion) && /spa|beauty|skincare|silk|jewelry|mom|self.?care/i.test(blob)) {
+      score += 0.25;
+    }
+  }
+
+  if (bounds.vibe) {
+    const v = bounds.vibe.toLowerCase();
+    if (blob.includes(v) || blob.includes(v.split(/[^a-z]+/)[0] || "")) score += 0.06;
+  }
 
   if (genderMismatch(product, bounds.gender, features.ageGroup)) score -= 2;
   return score;
@@ -205,6 +257,7 @@ export function rankByAnswerFit(
   features: ProfileFeatures,
   statsByProduct?: Map<string, ProductStats[]>,
 ): Product[] {
+  // Prefer products that match answers + have segment training evidence.
   return [...products].sort(
     (a, b) =>
       trendingFitScore(b, profile, features, statsByProduct) -

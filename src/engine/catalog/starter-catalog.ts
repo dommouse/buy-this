@@ -2,7 +2,7 @@ import type { Product } from "../types";
 
 /**
  * Emergency fallback gift list only.
- * Primary recommendations come from Claude (ENGINE_MODE=claude-suggest).
+ * Emergency fallback only — primary path is Gift Brain (Amazon search + scoring).
  * Also used to generate seed SQL via `bun run engine:seed-sql` if you ever seed DB products.
  */
 

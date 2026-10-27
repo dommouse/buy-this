@@ -6,6 +6,17 @@ import { AppMenu } from "@/components/app-menu";
 import { Button } from "@/components/ui/button";
 import { emptyAnswers, useGiftAnswers, type GiftAnswers } from "@/lib/gift-answers-context";
 import { cn } from "@/lib/utils";
+import {
+  autoRelationship,
+  buildStepIds,
+  getStepDef,
+  optionsForStep,
+  relationshipTitle,
+  resolvePath,
+  skipRelationship,
+  type QuestionOption,
+  type StepId,
+} from "@/questionnaire";
 
 export const Route = createFileRoute("/questionnaire")({
   head: () => ({
@@ -21,99 +32,6 @@ export const Route = createFileRoute("/questionnaire")({
   component: QuestionnairePage,
 });
 
-type Option = { value: string; emoji: string; hint?: string };
-
-const relationships: Option[] = [
-  { value: "Partner", emoji: "💕" },
-  { value: "Mom", emoji: "👩‍👧" },
-  { value: "Dad", emoji: "👨‍👧" },
-  { value: "Friend", emoji: "🤝" },
-  { value: "Sibling", emoji: "👫" },
-  { value: "Child", emoji: "🧒" },
-  { value: "Coworker/Boss", emoji: "💼" },
-  { value: "Grandparent", emoji: "🧓" },
-  { value: "Other", emoji: "🎁" },
-];
-const occasions: Option[] = [
-  { value: "Birthday", emoji: "🎂" },
-  { value: "Christmas/Holiday", emoji: "🎄" },
-  { value: "Valentine's Day", emoji: "💘" },
-  { value: "Anniversary", emoji: "💍" },
-  { value: "Mother's Day", emoji: "🌷" },
-  { value: "Father's Day", emoji: "👔" },
-  { value: "Graduation", emoji: "🎓" },
-  { value: "Baby Shower", emoji: "🍼" },
-  { value: "Wedding", emoji: "💒" },
-  { value: "Housewarming", emoji: "🏡" },
-  { value: "Just Because", emoji: "💝" },
-  { value: "Thank You", emoji: "🙏" },
-  { value: "Get Well", emoji: "🩹" },
-  { value: "Sympathy", emoji: "🕊️" },
-  { value: "Other", emoji: "✨" },
-];
-const childAges: Option[] = [
-  { value: "Under 1", emoji: "🍼" }, { value: "1-2", emoji: "👶" },
-  { value: "3-5", emoji: "🧸" }, { value: "6-8", emoji: "🛝" },
-  { value: "9-10", emoji: "🎒" }, { value: "11-12", emoji: "⭐" },
-];
-const teenAges: Option[] = [
-  { value: "13-15", emoji: "🎧" }, { value: "16-19", emoji: "📱" },
-];
-const adultAges: Option[] = [
-  { value: "18-20", emoji: "🎓" }, { value: "21-25", emoji: "✨" },
-  { value: "26-30", emoji: "🌟" }, { value: "31-40", emoji: "🌱" },
-  { value: "41-50", emoji: "🏆" }, { value: "51-64", emoji: "🌻" },
-  { value: "65+", emoji: "💛" },
-];
-const genders: Option[] = [
-  { value: "Male", emoji: "👨" }, { value: "Female", emoji: "👩" },
-  { value: "Non-binary", emoji: "🌈" }, { value: "Prefer not to say", emoji: "😊" },
-];
-const vibes: Option[] = [
-  { value: "Homebody", emoji: "🏠", hint: "cozy, indoors, relaxed" },
-  { value: "Outdoorsy", emoji: "🌿", hint: "nature, adventure, active" },
-  { value: "Creative", emoji: "🎨", hint: "artsy, crafty, expressive" },
-  { value: "Hustler", emoji: "💼", hint: "ambitious, career-driven, busy" },
-  { value: "Social Butterfly", emoji: "🎉", hint: "loves people, parties, events" },
-  { value: "Intellectual", emoji: "📚", hint: "reads, learns, deep thinker" },
-  { value: "Trendsetter", emoji: "💅", hint: "fashion-forward, on top of trends" },
-  { value: "Wellness-focused", emoji: "🧘", hint: "health, fitness, mindfulness" },
-];
-const interests: Option[] = [
-  { value: "Cooking/Food", emoji: "🍳" }, { value: "Sports/Fitness", emoji: "🏃" },
-  { value: "Music", emoji: "🎵" }, { value: "Gaming", emoji: "🎮" },
-  { value: "Reading", emoji: "📚" }, { value: "Travel", emoji: "✈️" },
-  { value: "Fashion/Beauty", emoji: "💄" }, { value: "Tech/Gadgets", emoji: "📱" },
-  { value: "Art/Design", emoji: "🎨" }, { value: "Gardening", emoji: "🌱" },
-  { value: "DIY/Crafts", emoji: "✂️" }, { value: "Pets/Animals", emoji: "🐾" },
-  { value: "Movies/TV", emoji: "🎬" }, { value: "Cars/Motorsports", emoji: "🏎️" },
-  { value: "Home Decor", emoji: "🛋️" }, { value: "Spirituality/Faith", emoji: "🕊️" },
-  { value: "Photography", emoji: "📸" }, { value: "Wine/Cocktails", emoji: "🍹" },
-  { value: "I don't really know 🤷", emoji: "🤷" },
-];
-const unknownInterest = "I don't really know 🤷";
-const budgets: Option[] = [
-  { value: "Under $25", emoji: "🪙", hint: "Thoughtful & Thrifty" },
-  { value: "$25-$50", emoji: "💵", hint: "Sweet Spot" },
-  { value: "$50-$100", emoji: "💸", hint: "Go-Getter" },
-  { value: "$100-$200", emoji: "💰", hint: "Big Impression" },
-  { value: "$200-$350", emoji: "🚀", hint: "All Out" },
-  { value: "$350-$500", emoji: "💎", hint: "Luxury" },
-  { value: "$500+", emoji: "👑", hint: "Sky's the Limit" },
-];
-const giftTypes: Option[] = [
-  { value: "Something to Unwrap", emoji: "🎁", hint: "a physical product they can hold" },
-  { value: "An Experience", emoji: "🎟️", hint: "tickets, classes, adventures" },
-  { value: "A Gift Card or Cash", emoji: "💳", hint: "let them choose" },
-  { value: "Surprise Me", emoji: "🤷", hint: "let the Gift Brain decide" },
-];
-const kidsHiddenFor = ["Child"];
-const childRelationships = ["Child"];
-
-type StepId =
-  | "relationship" | "occasion" | "age" | "gender" | "vibe" | "interests"
-  | "wants" | "avoid" | "budget" | "kids" | "giftType" | "photo";
-
 const MAX_PHOTO = 5 * 1024 * 1024;
 const emojiAssets = import.meta.glob<string>("../assets/emoji/*.svg", {
   eager: true,
@@ -121,6 +39,7 @@ const emojiAssets = import.meta.glob<string>("../assets/emoji/*.svg", {
   query: "?url",
 });
 
+/** Prefer bundled SVG; fall back to native emoji so every answer shows an icon. */
 function EmojiIcon({ emoji }: { emoji: string }) {
   const codePoint = [...emoji]
     .map((character) => character.codePointAt(0)?.toString(16))
@@ -128,8 +47,14 @@ function EmojiIcon({ emoji }: { emoji: string }) {
     .join("-");
   const src = emojiAssets[`../assets/emoji/${codePoint}.svg`];
 
-  if (!src) return <span className="size-6 shrink-0" aria-hidden="true" />;
-  return <img src={src} alt="" aria-hidden="true" className="size-6 shrink-0 object-contain" />;
+  if (src) {
+    return <img src={src} alt="" aria-hidden="true" className="size-6 shrink-0 object-contain" />;
+  }
+  return (
+    <span className="grid size-6 shrink-0 place-items-center text-lg leading-none" aria-hidden="true">
+      {emoji}
+    </span>
+  );
 }
 
 function QuestionnairePage() {
@@ -141,43 +66,108 @@ function QuestionnairePage() {
   const [error, setError] = useState("");
   const [shakeKey, setShakeKey] = useState(0);
 
-  const steps = useMemo<StepId[]>(() => {
-    const all: StepId[] = ["relationship", "occasion", "age", "gender", "vibe", "interests", "wants", "avoid", "budget", "kids", "giftType", "photo"];
-    return kidsHiddenFor.includes(a.relationship) ? all.filter((s) => s !== "kids") : all;
-  }, [a.relationship]);
+  const routeAnswers = useMemo(
+    () => ({
+      occasion: a.occasion,
+      relationship: a.relationship,
+      ageRange: a.ageRange,
+      graduationLevel: a.graduationLevel,
+    }),
+    [a.occasion, a.relationship, a.ageRange, a.graduationLevel],
+  );
 
-  const step = steps[Math.min(index, steps.length - 1)] ?? "relationship";
+  const steps = useMemo(() => buildStepIds(routeAnswers), [routeAnswers]);
+  const step = steps[Math.min(index, steps.length - 1)] ?? "occasion";
   const isLast = index === steps.length - 1;
-  const progress = ((index + 1) / steps.length) * 100;
+  const progress = ((index + 1) / Math.max(1, steps.length)) * 100;
+  const def = getStepDef(step);
 
   const update = <K extends keyof GiftAnswers>(key: K, value: GiftAnswers[K]) => {
-    setA((prev) => ({ ...prev, [key]: value }));
+    setA((prev) => {
+      const next = { ...prev, [key]: value };
+      if (key === "occasion") {
+        const auto = autoRelationship(String(value));
+        if (auto) next.relationship = auto;
+        else if (skipRelationship(prev.occasion) && !skipRelationship(String(value))) {
+          next.relationship = "";
+        }
+        next.ageRange = "";
+        next.graduationLevel = "";
+        next.budget = "";
+        next.interests = [];
+      }
+      if (key === "relationship") {
+        next.ageRange = "";
+        next.budget = "";
+      }
+      next.path = resolvePath({
+        occasion: next.occasion,
+        relationship: next.relationship,
+        ageRange: next.ageRange || (next.graduationLevel ? "20-39" : ""),
+        graduationLevel: next.graduationLevel,
+      });
+      return next;
+    });
     setError("");
   };
 
   const validate = (): string => {
-    switch (step) {
-      case "relationship":
-        if (!a.relationship) return "Pick one to continue";
-        if (a.relationship === "Other" && !a.relationshipOther.trim()) return "Tell me who it's for";
+    if (def.optional) return "";
+    switch (def.kind) {
+      case "multi": {
+        const list = (a as Record<string, unknown>)[def.field];
+        if (Array.isArray(list) && list.length > 0) return "";
+        return "Pick at least one to continue";
+      }
+      case "text":
         return "";
-      case "occasion":
-        if (!a.occasion) return "Pick one to continue";
-        if (a.occasion === "Other" && !a.occasionOther.trim()) return "Tell me the occasion";
+      case "photo":
         return "";
-      case "age": return a.ageRange ? "" : "Pick one to continue";
-      case "gender": return a.gender ? "" : "Pick one to continue";
-      case "vibe": return a.vibe ? "" : "Pick one to continue";
-      case "interests": return a.interests.length ? "" : "Pick at least one to continue";
-      case "budget": return a.budget ? "" : "Pick one to continue";
-      case "kids": return a.hasKids ? "" : "Pick one to continue";
-      case "giftType": return a.giftType ? "" : "Pick one to continue";
-      default: return "";
+      default: {
+        const v = (a as Record<string, unknown>)[def.field];
+        if (typeof v === "string" && v.trim()) {
+          if (def.field === "occasion" && v === "Other" && !a.occasionOther.trim()) {
+            return "Tell me the occasion";
+          }
+          if (def.field === "relationship" && v === "Other" && !a.relationshipOther.trim()) {
+            return "Tell me who it's for";
+          }
+          return "";
+        }
+        return "Pick one to continue";
+      }
     }
   };
 
   const finish = () => {
-    const final = { ...a, hasKids: kidsHiddenFor.includes(a.relationship) ? "" : a.hasKids };
+    const path = resolvePath({
+      occasion: a.occasion,
+      relationship: a.relationship,
+      ageRange: a.ageRange || (a.graduationLevel ? "20-39" : ""),
+      graduationLevel: a.graduationLevel,
+    });
+    // Map path answers into engine-friendly vibe / wants / interests.
+    const vibe =
+      a.teenStyle ||
+      a.parentType ||
+      a.personality[0] ||
+      a.practicalOrSpecial ||
+      a.howFeel ||
+      "";
+    const wants = [a.talkAbout, a.character, a.feelSeen, a.neverBuy].filter(Boolean).join(" · ");
+    const interests =
+      a.interests.length > 0
+        ? a.interests
+        : [a.helpWith, a.familyNeed, a.favorites, a.neverBuy].filter(Boolean);
+
+    const final: GiftAnswers = {
+      ...a,
+      path,
+      vibe,
+      wants: a.wants || wants,
+      interests,
+      ageRange: a.ageRange || (a.graduationLevel ? "20-39" : a.ageRange),
+    };
     console.log("BUY THIS answers:", final);
     saveAnswers(final);
     navigate({ to: "/results" });
@@ -192,12 +182,22 @@ function QuestionnairePage() {
     }
     if (isLast) return finish();
     setDirection(1);
-    setIndex((i) => i + 1);
+    // Clamp index if step list shrank after an answer.
+    setIndex((i) => {
+      const nextSteps = buildStepIds({
+        occasion: a.occasion,
+        relationship: a.relationship,
+        ageRange: a.ageRange,
+        graduationLevel: a.graduationLevel,
+      });
+      return Math.min(i + 1, Math.max(0, nextSteps.length - 1));
+    });
   };
 
   const skip = () => {
     setError("");
     setDirection(1);
+    if (isLast) return finish();
     setIndex((i) => i + 1);
   };
 
@@ -207,6 +207,9 @@ function QuestionnairePage() {
     setDirection(-1);
     setIndex((i) => i - 1);
   };
+
+  const title =
+    step === "relationship" ? relationshipTitle(a.occasion) : def.title;
 
   return (
     <main className="min-h-dvh bg-background px-4 pb-8 pt-20 text-foreground sm:pt-24">
@@ -221,11 +224,22 @@ function QuestionnairePage() {
         <div className="rounded-2xl bg-card shadow-[0_8px_30px_-12px_oklch(0.4_0.1_350/0.25)]">
           <div className="sticky top-0 z-10 rounded-t-2xl bg-card px-5 pb-3 pt-5 sm:px-8">
             <div className="mb-2 flex items-center justify-between text-xs font-medium text-muted-foreground">
-              <span>Question {index + 1} of {steps.length}</span>
+              <span>
+                {index + 1} of {steps.length}
+              </span>
               <span>{Math.round(progress)}%</span>
             </div>
-            <div className="h-1 w-full overflow-hidden rounded-full bg-muted" role="progressbar" aria-valuenow={index + 1} aria-valuemin={1} aria-valuemax={steps.length}>
-              <div className="h-full rounded-full bg-primary transition-[width] duration-500 ease-out" style={{ width: `${progress}%` }} />
+            <div
+              className="h-1 w-full overflow-hidden rounded-full bg-muted"
+              role="progressbar"
+              aria-valuenow={index + 1}
+              aria-valuemin={1}
+              aria-valuemax={steps.length}
+            >
+              <div
+                className="h-full rounded-full bg-primary transition-[width] duration-500 ease-out"
+                style={{ width: `${progress}%` }}
+              />
             </div>
           </div>
 
@@ -235,8 +249,20 @@ function QuestionnairePage() {
             style={{ ["--q-from" as string]: direction === 1 ? "24px" : "-24px" }}
           >
             <div key={shakeKey} className={cn(shakeKey > 0 && error && "animate-gentle-shake")}>
-              <StepBody step={step} a={a} update={update} onSkip={skip} onFinish={finish} />
-              <p className={cn("mt-4 min-h-5 text-sm text-destructive transition-opacity", error ? "opacity-100" : "opacity-0")} role="alert">
+              <StepBody
+                step={step}
+                title={title}
+                a={a}
+                update={update}
+                onSkip={skip}
+              />
+              <p
+                className={cn(
+                  "mt-4 min-h-5 text-sm text-destructive transition-opacity",
+                  error ? "opacity-100" : "opacity-0",
+                )}
+                role="alert"
+              >
                 {error}
               </p>
             </div>
@@ -251,16 +277,33 @@ function QuestionnairePage() {
             >
               ← Back
             </button>
-            <button
-              type="button"
-              onClick={next}
-              className={cn(
-                "min-h-11 rounded-full bg-primary font-bold text-primary-foreground shadow-sm transition-all hover:scale-[1.03] hover:bg-primary/90 active:scale-95",
-                isLast ? "px-8 py-3.5 text-base sm:text-lg" : "px-7 py-3 text-sm",
+            <div className="flex items-center gap-2">
+              {def.optional && !isLast && (
+                <button
+                  type="button"
+                  onClick={skip}
+                  className="min-h-11 px-3 text-sm font-medium text-muted-foreground underline-offset-4 hover:text-primary hover:underline"
+                >
+                  Skip
+                </button>
               )}
-            >
-              {isLast ? (a.photo ? "Find My Gifts 🎁" : "Skip — Find My Gifts 🎁") : "Next →"}
-            </button>
+              <button
+                type="button"
+                onClick={next}
+                className={cn(
+                  "min-h-11 rounded-full bg-primary font-bold text-primary-foreground shadow-sm transition-all hover:scale-[1.03] hover:bg-primary/90 active:scale-95",
+                  isLast ? "px-8 py-3.5 text-base sm:text-lg" : "px-7 py-3 text-sm",
+                )}
+              >
+                {isLast
+                  ? a.photo
+                    ? "Find My Gifts"
+                    : def.optional
+                      ? "Skip — Find My Gifts"
+                      : "Find My Gifts"
+                  : "Next →"}
+              </button>
+            </div>
           </div>
         </div>
       </div>
@@ -270,176 +313,125 @@ function QuestionnairePage() {
 
 type BodyProps = {
   step: StepId;
+  title: string;
   a: GiftAnswers;
   update: <K extends keyof GiftAnswers>(key: K, value: GiftAnswers[K]) => void;
   onSkip: () => void;
-  onFinish: () => void;
 };
 
-function StepBody({ step, a, update, onSkip }: BodyProps) {
-  switch (step) {
-    case "relationship":
-      return (
-        <>
-          <Heading title="Who are you shopping for?" />
-          <CardGrid
-            options={relationships}
-            value={a.relationship}
-            onChange={(v) => {
-              if (v !== a.relationship) update("ageRange", "");
-              update("relationship", v);
-            }}
-          />
-          {a.relationship === "Other" && (
-            <TextField autoFocus value={a.relationshipOther} onChange={(v) => update("relationshipOther", v)} placeholder="Who is it for?" />
-          )}
-        </>
-      );
-    case "occasion":
-      return (
-        <>
-          <Heading title="What's the occasion?" />
-          <CardGrid options={occasions} value={a.occasion} onChange={(v) => update("occasion", v)} />
-          {a.occasion === "Other" && (
-            <TextField autoFocus value={a.occasionOther} onChange={(v) => update("occasionOther", v)} placeholder="What's the occasion?" />
-          )}
-        </>
-      );
-    case "age": {
-      // Child covers kids + teens (13–19). There is no separate "Teen" relationship option.
-      const ageOptions = childRelationships.includes(a.relationship)
-        ? [...childAges, ...teenAges]
-        : adultAges;
-      return (
-        <>
-          <Heading title="How old are they?" />
-          <Pills options={ageOptions} value={a.ageRange} onChange={(v) => update("ageRange", v)} />
-        </>
-      );
-    }
-    case "gender":
-      return (
-        <>
-          <Heading title="What gender do they identify as?" />
-          <Pills options={genders} value={a.gender} onChange={(v) => update("gender", v)} />
-        </>
-      );
-    case "vibe":
-      return (
-        <>
-          <Heading title="What's their vibe?" sub="Pick the one that fits them best" />
-          <CardGrid options={vibes} value={a.vibe} onChange={(v) => update("vibe", v)} cols="grid-cols-1 sm:grid-cols-2" row />
-        </>
-      );
-    case "interests": {
-      const toggle = (v: string) => {
-        if (a.interests.includes(v)) {
-          update("interests", a.interests.filter((i) => i !== v));
-        } else if (v === unknownInterest) {
-          update("interests", [unknownInterest]);
-        } else {
-          const knownInterests = a.interests.filter((i) => i !== unknownInterest);
-          if (knownInterests.length < 3) update("interests", [...knownInterests, v]);
-        }
-      };
-      return (
-        <>
-          <Heading title="What are they into? Pick up to 3." />
-          <p className="mb-3 text-sm font-medium text-primary">{a.interests.length}/3 selected</p>
-          <div className="flex flex-wrap gap-2">
-            {interests.map((option) => {
-              const on = a.interests.includes(option.value);
-              const isUnknown = option.value === unknownInterest;
-              const knownCount = a.interests.filter((i) => i !== unknownInterest).length;
-              const disabled = !isUnknown && !on && knownCount >= 3;
-              return (
-                <button
-                  key={option.value}
-                  type="button"
-                  aria-pressed={on}
-                  disabled={disabled}
-                  onClick={() => toggle(option.value)}
-                  className={cn(
-                    "inline-flex min-h-11 items-center gap-1.5 rounded-full border px-4 text-sm font-medium transition-all",
-                    isUnknown && !on && "border-dashed bg-muted/60",
-                    on && !isUnknown ? "border-primary bg-primary text-primary-foreground" : "border-border hover:border-primary/60",
-                    on && isUnknown && "border-primary bg-accent text-accent-foreground",
-                    disabled && "opacity-40",
-                  )}
-                >
-                  {on && <Check className="size-4" strokeWidth={3} />}
-                  <EmojiIcon emoji={option.emoji} />
-                  {option.value}
-                </button>
-              );
-            })}
-          </div>
-        </>
-      );
-    }
-    case "wants":
-      return (
-        <>
-          <Heading title="Is there anything they've mentioned wanting?" sub="Even a hint helps! If nothing comes to mind, skip this one." />
-          <TextField value={a.wants} onChange={(v) => update("wants", v)} placeholder="e.g., 'a nice watch', 'cooking gadgets', 'something for their home office'" />
-          <SkipLink onClick={onSkip} />
-        </>
-      );
-    case "avoid":
-      return (
-        <>
-          <Heading title="Anything I should definitely NOT suggest?" sub="Things they already have, dislike, or would be awkward to give." />
-          <TextField value={a.avoid} onChange={(v) => update("avoid", v)} placeholder="e.g., 'no candles', 'they already have an Apple Watch', 'nothing too personal'" />
-          <SkipLink onClick={onSkip} />
-        </>
-      );
-    case "budget":
-      return (
-        <>
-          <Heading title="What's your budget?" />
-          <CardGrid options={budgets} value={a.budget} onChange={(v) => update("budget", v)} cols="grid-cols-2 sm:grid-cols-3" big />
-        </>
-      );
-    case "kids":
-      return (
-        <>
-          <Heading title="Do they have kids?" sub="This helps me pick gifts that are practical for their life." />
-          <Pills
-            options={[{ value: "Yes", emoji: "👶" }, { value: "No", emoji: "🙅" }, { value: "Not sure", emoji: "🤔" }]}
-            value={a.hasKids}
-            onChange={(v) => update("hasKids", v)}
-          />
-        </>
-      );
-    case "giftType":
-      return (
-        <>
-          <Heading title="What kind of gift feels right?" />
-          <CardGrid options={giftTypes} value={a.giftType} onChange={(v) => update("giftType", v)} cols="grid-cols-1 sm:grid-cols-2" row />
-        </>
-      );
-    case "photo":
-      return (
-        <>
-          <Heading title="Got a photo of them?" sub="Upload a photo and I'll pick up on their style, vibe, and aesthetic. Totally optional but it helps me nail it! 📸" />
-          <PhotoUpload photo={a.photo} onChange={(p) => update("photo", p)} />
-        </>
-      );
+function StepBody({ step, title, a, update, onSkip }: BodyProps) {
+  const def = getStepDef(step);
+  const options = optionsForStep(step, {
+    occasion: a.occasion,
+    relationship: a.relationship,
+    ageRange: a.ageRange,
+  });
+
+  const heading = <Heading title={title} {...(def.sub ? { sub: def.sub } : {})} />;
+
+  if (def.kind === "photo") {
+    return (
+      <>
+        {heading}
+        <PhotoUpload photo={a.photo} onChange={(p) => update("photo", p)} />
+        <SkipLink onClick={onSkip} />
+      </>
+    );
   }
+
+  if (def.kind === "text") {
+    const value = String((a as Record<string, unknown>)[def.field] ?? "");
+    return (
+      <>
+        {heading}
+        <TextField
+          value={value}
+          onChange={(v) => update(def.field as keyof GiftAnswers, v as never)}
+          placeholder={def.placeholder || ""}
+        />
+        {def.optional && <SkipLink onClick={onSkip} />}
+      </>
+    );
+  }
+
+  if (def.kind === "multi") {
+    const field = def.field as "interests" | "personality";
+    const selected = (a[field] as string[]) || [];
+    const max = def.maxSelect ?? 2;
+    const toggle = (v: string) => {
+      if (selected.includes(v)) {
+        update(field, selected.filter((i) => i !== v) as never);
+      } else if (selected.length < max) {
+        update(field, [...selected, v] as never);
+      }
+    };
+    return (
+      <>
+        {heading}
+        <p className="mb-3 text-sm font-medium text-primary">
+          {selected.length}/{max} selected
+        </p>
+        <MultiPills options={options} selected={selected} onToggle={toggle} max={max} />
+      </>
+    );
+  }
+
+  const value = String((a as Record<string, unknown>)[def.field] ?? "");
+  const onChange = (v: string) => update(def.field as keyof GiftAnswers, v as never);
+
+  return (
+    <>
+      {heading}
+      {def.kind === "pills" ? (
+        <Pills options={options} value={value} onChange={onChange} />
+      ) : (
+        <CardGrid
+          options={options}
+          value={value}
+          onChange={onChange}
+          cols={options.length > 6 ? "grid-cols-2 sm:grid-cols-3" : "grid-cols-2 sm:grid-cols-3"}
+        />
+      )}
+      {def.field === "occasion" && value === "Other" && (
+        <TextField
+          autoFocus
+          value={a.occasionOther}
+          onChange={(v) => update("occasionOther", v)}
+          placeholder="What's the occasion?"
+        />
+      )}
+      {def.field === "relationship" && value === "Other" && (
+        <TextField
+          autoFocus
+          value={a.relationshipOther}
+          onChange={(v) => update("relationshipOther", v)}
+          placeholder="Who is it for?"
+        />
+      )}
+    </>
+  );
 }
 
-function Heading({ title, sub }: { title: string; sub?: string }) {
+function Heading({ title, sub }: { title: string; sub?: string | undefined }) {
   return (
     <div className="mb-5">
       <h1 className="text-2xl font-bold leading-tight sm:text-3xl">{title}</h1>
-      {sub && <p className="mt-2 text-sm text-muted-foreground sm:text-base">{sub}</p>}
+      {sub ? <p className="mt-2 text-sm text-muted-foreground sm:text-base">{sub}</p> : null}
     </div>
   );
 }
 
 function CardGrid({
-  options, value, onChange, cols = "grid-cols-2 sm:grid-cols-3", row, big,
-}: { options: Option[]; value: string; onChange: (v: string) => void; cols?: string; row?: boolean; big?: boolean }) {
+  options,
+  value,
+  onChange,
+  cols = "grid-cols-2 sm:grid-cols-3",
+}: {
+  options: QuestionOption[];
+  value: string;
+  onChange: (v: string) => void;
+  cols?: string;
+}) {
   return (
     <div className={cn("grid gap-3", cols)} role="radiogroup">
       {options.map((o) => {
@@ -452,14 +444,13 @@ function CardGrid({
             aria-checked={on}
             onClick={() => onChange(o.value)}
             className={cn(
-              "relative flex min-h-11 rounded-xl border-2 p-3 transition-all hover:-translate-y-0.5 hover:border-primary/60 active:scale-[0.98]",
-              row ? "items-center gap-3 text-left" : "flex-col items-center justify-center gap-1.5 text-center",
+              "relative flex min-h-11 flex-col items-center justify-center gap-1.5 rounded-xl border-2 p-3 text-center transition-all hover:-translate-y-0.5 hover:border-primary/60 active:scale-[0.98]",
               on ? "border-primary bg-accent shadow-sm" : "border-border bg-card",
             )}
           >
             <EmojiIcon emoji={o.emoji} />
             <span className="min-w-0">
-              <span className={cn("block font-semibold", big ? "text-lg" : "text-sm")}>{o.value}</span>
+              <span className="block text-sm font-semibold">{o.value}</span>
               {o.hint && <span className="block text-xs text-muted-foreground">{o.hint}</span>}
             </span>
             {on && (
@@ -474,7 +465,15 @@ function CardGrid({
   );
 }
 
-function Pills({ options, value, onChange }: { options: Option[]; value: string; onChange: (v: string) => void }) {
+function Pills({
+  options,
+  value,
+  onChange,
+}: {
+  options: QuestionOption[];
+  value: string;
+  onChange: (v: string) => void;
+}) {
   return (
     <div className="flex flex-wrap gap-2" role="radiogroup">
       {options.map((o) => {
@@ -500,7 +499,56 @@ function Pills({ options, value, onChange }: { options: Option[]; value: string;
   );
 }
 
-function TextField({ value, onChange, placeholder, autoFocus }: { value: string; onChange: (v: string) => void; placeholder: string; autoFocus?: boolean }) {
+function MultiPills({
+  options,
+  selected,
+  onToggle,
+  max,
+}: {
+  options: QuestionOption[];
+  selected: string[];
+  onToggle: (v: string) => void;
+  max: number;
+}) {
+  return (
+    <div className="flex flex-wrap gap-2">
+      {options.map((option) => {
+        const on = selected.includes(option.value);
+        const disabled = !on && selected.length >= max;
+        return (
+          <button
+            key={option.value}
+            type="button"
+            aria-pressed={on}
+            disabled={disabled}
+            onClick={() => onToggle(option.value)}
+            className={cn(
+              "inline-flex min-h-11 items-center gap-1.5 rounded-full border px-4 text-sm font-medium transition-all",
+              on ? "border-primary bg-primary text-primary-foreground" : "border-border hover:border-primary/60",
+              disabled && "opacity-40",
+            )}
+          >
+            {on && <Check className="size-4" strokeWidth={3} />}
+            <EmojiIcon emoji={option.emoji} />
+            {option.value}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
+function TextField({
+  value,
+  onChange,
+  placeholder,
+  autoFocus,
+}: {
+  value: string;
+  onChange: (v: string) => void;
+  placeholder: string;
+  autoFocus?: boolean;
+}) {
   return (
     <input
       type="text"
@@ -515,13 +563,23 @@ function TextField({ value, onChange, placeholder, autoFocus }: { value: string;
 
 function SkipLink({ onClick }: { onClick: () => void }) {
   return (
-    <button type="button" onClick={onClick} className="mt-3 min-h-11 text-sm font-medium text-muted-foreground underline-offset-4 hover:text-primary hover:underline">
+    <button
+      type="button"
+      onClick={onClick}
+      className="mt-3 min-h-11 text-sm font-medium text-muted-foreground underline-offset-4 hover:text-primary hover:underline"
+    >
       Skip this one
     </button>
   );
 }
 
-function PhotoUpload({ photo, onChange }: { photo: GiftAnswers["photo"]; onChange: (p: GiftAnswers["photo"]) => void }) {
+function PhotoUpload({
+  photo,
+  onChange,
+}: {
+  photo: GiftAnswers["photo"];
+  onChange: (p: GiftAnswers["photo"]) => void;
+}) {
   const inputRef = useRef<HTMLInputElement>(null);
   const [dragging, setDragging] = useState(false);
   const [err, setErr] = useState("");
@@ -533,7 +591,8 @@ function PhotoUpload({ photo, onChange }: { photo: GiftAnswers["photo"]; onChang
     if (file.size > MAX_PHOTO) return setErr("That photo is over 5MB — try a smaller one.");
     setErr("");
     const reader = new FileReader();
-    reader.onload = () => onChange({ name: file.name, type: file.type, size: file.size, dataUrl: String(reader.result) });
+    reader.onload = () =>
+      onChange({ name: file.name, type: file.type, size: file.size, dataUrl: String(reader.result) });
     reader.readAsDataURL(file);
   };
 
@@ -542,9 +601,15 @@ function PhotoUpload({ photo, onChange }: { photo: GiftAnswers["photo"]; onChang
     return (
       <div className="relative mx-auto w-fit">
         {isHeic ? (
-          <div className="grid size-48 place-items-center rounded-xl border border-border bg-muted p-3 text-center text-sm text-muted-foreground">📸 {photo.name}</div>
+          <div className="grid size-48 place-items-center rounded-xl border border-border bg-muted p-3 text-center text-sm text-muted-foreground">
+            📸 {photo.name}
+          </div>
         ) : (
-          <img src={photo.dataUrl} alt="Uploaded photo of the gift recipient" className="size-48 rounded-xl object-cover shadow-sm" />
+          <img
+            src={photo.dataUrl}
+            alt="Uploaded photo of the gift recipient"
+            className="size-48 rounded-xl object-cover shadow-sm"
+          />
         )}
         <button
           type="button"
@@ -559,30 +624,37 @@ function PhotoUpload({ photo, onChange }: { photo: GiftAnswers["photo"]; onChang
   }
 
   return (
-    <>
+    <div>
       <button
         type="button"
         onClick={() => inputRef.current?.click()}
-        onDragOver={(e) => { e.preventDefault(); setDragging(true); }}
+        onDragOver={(e) => {
+          e.preventDefault();
+          setDragging(true);
+        }}
         onDragLeave={() => setDragging(false)}
-        onDrop={(e) => { e.preventDefault(); setDragging(false); handle(e.dataTransfer.files[0]); }}
+        onDrop={(e) => {
+          e.preventDefault();
+          setDragging(false);
+          handle(e.dataTransfer.files?.[0]);
+        }}
         className={cn(
-          "flex w-full flex-col items-center justify-center gap-2 rounded-xl border-2 border-dashed px-4 py-10 text-center transition-colors",
-          dragging ? "border-primary bg-accent" : "border-input hover:border-primary/60",
+          "flex w-full flex-col items-center justify-center gap-2 rounded-xl border-2 border-dashed px-4 py-10 text-sm text-muted-foreground transition-colors",
+          dragging ? "border-primary bg-accent" : "border-border hover:border-primary/50",
         )}
       >
         <ImagePlus className="size-8 text-primary" />
-        <span className="font-semibold">Tap to upload or drag a photo here</span>
-        <span className="text-xs text-muted-foreground">JPG, PNG, or HEIC · up to 5MB</span>
+        <span>Tap to upload or drag a photo here</span>
+        <span className="text-xs">JPG, PNG, or HEIC · max 5MB</span>
       </button>
       <input
         ref={inputRef}
         type="file"
         accept="image/jpeg,image/png,image/heic,image/heif,.heic"
         className="hidden"
-        onChange={(e) => { handle(e.target.files?.[0]); e.target.value = ""; }}
+        onChange={(e) => handle(e.target.files?.[0])}
       />
       {err && <p className="mt-2 text-sm text-destructive">{err}</p>}
-    </>
+    </div>
   );
 }

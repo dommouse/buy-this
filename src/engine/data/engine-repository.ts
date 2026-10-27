@@ -1,6 +1,5 @@
 import { getEngineDb } from "./server-db";
 
-import type { SegmentInsight } from "../ai/claude-suggest.server";
 import { amazonCatalog } from "../catalog/amazon-catalog";
 import { starterCatalog } from "../catalog/starter-catalog";
 import { amazonAsinUrl, withAmazonTag } from "../affiliates/amazon";
@@ -10,6 +9,15 @@ import { engineConfig } from "../config";
 import { normalizeAudience } from "../features/fit";
 import type { Product, ProductStats, Recommendation } from "../types";
 import { engineWarn } from "../utils/logger";
+
+/** Compact historical winners for Gift Brain memory / logs. */
+export type SegmentInsight = {
+  productId: string;
+  title: string | null;
+  impressions: number;
+  clicks: number;
+  ctr: number;
+};
 
 function tagAmazonProducts(products: Product[]): Product[] {
   return products
@@ -56,6 +64,11 @@ type ProductRow = {
   buy_url: string;
   provider: string;
   popularity: number;
+  occasion?: string[] | null;
+  price_tier?: string | null;
+  relationship?: string[] | null;
+  parent_type?: string[] | null;
+  wear_use_do?: string | null;
 };
 
 function untyped() {
@@ -64,7 +77,7 @@ function untyped() {
 
 let productCache: { at: number; products: Product[] } | null = null;
 
-/** Emergency fallback catalog only — primary mode uses Claude suggestions. */
+/** Catalog + DB products for scoring / Gift Brain memory. */
 export async function loadProducts(): Promise<Product[]> {
   if (productCache && Date.now() - productCache.at < 60_000) return productCache.products;
   const { data, error } = await untyped().from("products").select("*").eq("active", true).limit(2000);
@@ -79,10 +92,22 @@ export async function loadProducts(): Promise<Product[]> {
     buyUrl: withAmazonTag(p.buyUrl),
   }));
   // Merge curated Amazon gifts so scoring can prefer shoppable Associates links.
+  // Prefer live /dp ASIN versions when DB/starter rows only have search URLs.
   const byId = new Map(products.map((p) => [p.id, p]));
+  const byTitle = new Map(
+    products.map((p) => [p.title.trim().toLowerCase(), p] as const),
+  );
   if (engineConfig.amazon.enabled) {
     for (const p of tagAmazonProducts(amazonCatalog)) {
-      if (!byId.has(p.id)) byId.set(p.id, p);
+      byId.set(p.id, p);
+      const key = p.title.trim().toLowerCase();
+      const existing = byTitle.get(key);
+      if (!existing || isAmazonSearchUrl(existing.buyUrl) || !extractAsin(existing.buyUrl)) {
+        byTitle.set(key, p);
+        // Replace search-URL twin under its old id so filters still see one live gift
+        if (existing && existing.id !== p.id) byId.delete(existing.id);
+        byId.set(p.id, p);
+      }
     }
   }
   const merged = [...byId.values()];
@@ -114,10 +139,15 @@ function rowToProduct(r: ProductRow): Product {
     buyUrl: r.buy_url,
     provider: r.provider,
     popularity: r.popularity,
+    occasions: r.occasion ?? [],
+    priceTier: (r.price_tier as Product["priceTier"]) || "",
+    relationships: r.relationship ?? [],
+    parentTypes: r.parent_type ?? [],
+    wearUseDo: (r.wear_use_do as Product["wearUseDo"]) || "",
   };
 }
 
-/** Persist Claude suggestions so later clicks can train segment stats. */
+/** Persist Gift Brain picks so later clicks train segment stats. */
 export async function upsertSuggestedProducts(items: Recommendation[]) {
   if (!items.length) return;
   const rows = items.map(({ product: p }) => ({
@@ -134,7 +164,7 @@ export async function upsertSuggestedProducts(items: Recommendation[]) {
     image_url: p.imageUrl,
     buy_url: p.buyUrl,
     product_url: p.buyUrl,
-    provider: p.provider || "claude",
+    provider: p.provider || "amazon",
     popularity: p.popularity,
     active: true,
     updated_at: new Date().toISOString(),
@@ -159,7 +189,7 @@ export async function loadStats(segment: string): Promise<Map<string, ProductSta
 }
 
 /**
- * Compact historical winners for Claude's prompt (segment first, then global).
+ * Compact historical winners for Gift Brain memory (segment first, then global).
  * Safe when tables are missing — returns [].
  */
 export async function loadSegmentInsights(segment: string): Promise<SegmentInsight[]> {

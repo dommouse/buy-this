@@ -105,6 +105,14 @@ function parseAvoidCategories(): AvoidCategory[] {
   return matched.length ? matched : DEFAULT_AVOID_CATEGORIES;
 }
 
+/** Map legacy ENGINE_MODE values onto Gift Brain. */
+function normalizeEngineMode(raw: string): "gift-brain" | "keyword-search" {
+  const m = (raw || "gift-brain").toLowerCase().trim();
+  if (m === "keyword-search") return "keyword-search";
+  // claude-suggest / catalog-hybrid / anything else → gift-brain
+  return "gift-brain";
+}
+
 /** True when text hits a configured avoid-category term. */
 export function matchesAvoidCategory(text: string, categories = engineConfig.avoidCategories): AvoidCategory | null {
   const blob = ` ${text.toLowerCase().replace(/[^a-z0-9\s]/g, " ").replace(/\s+/g, " ").trim()} `;
@@ -133,31 +141,33 @@ export const engineConfig = {
   tlsInsecure: envBool("ENGINE_TLS_INSECURE", false),
 
   /**
-   * Product source mode:
-   * - keyword-search: phrases → blocklist → store search → pick 4 slots (primary).
-   * - claude-suggest: Claude invents gifts directly (legacy).
-   * - catalog-hybrid: score curated catalog, optional Lovable re-rank (legacy).
+   * Gift Brain mode (Claude-free):
+   * - gift-brain / keyword-search: phrases → Amazon/catalog → answer-fit score → 4 slots.
+   * Legacy aliases (claude-suggest, catalog-hybrid) still resolve to gift-brain.
    */
-  mode: (engineEnv("ENGINE_MODE", "keyword-search") || "keyword-search") as
-    | "keyword-search"
-    | "claude-suggest"
-    | "catalog-hybrid",
+  mode: normalizeEngineMode(engineEnv("ENGINE_MODE", "gift-brain")),
 
-  /** Claude / Anthropic */
-  useAi: envBool("ENGINE_USE_AI", true),
+  /**
+   * Hybrid kill-switch: when true + ANTHROPIC_API_KEY, Claude only picks final 4 + tips.
+   * Search objects + filters always stay local.
+   */
+  useAi: envBool("ENGINE_USE_AI", false),
   anthropicApiKey: engineEnv("ANTHROPIC_API_KEY"),
   claudeModel: engineEnv("ENGINE_CLAUDE_MODEL", "claude-sonnet-4-5-20250929"),
+
+  /** Dual catalog: both (default) | amazon | local */
+  catalogMode: (engineEnv("ENGINE_CATALOG_MODE", "both") || "both") as "both" | "amazon" | "local",
   /** How many gifts to return (dynamic list; UI paginates). */
   recommendationCount: envInt("ENGINE_RECOMMENDATION_COUNT", 12),
   /** Client page size hint for results pagination. */
   pageSize: envInt("ENGINE_PAGE_SIZE", 4),
-  /** Per Claude call timeout — batch search needs headroom on slow networks. */
+  /** Overall recommend timeout headroom (Amazon HTML can be slow). */
   maxRecommendationMs: envInt("ENGINE_MAX_RECOMMENDATION_MS", 90_000),
 
-  /** Legacy Lovable gateway re-ranker (catalog-hybrid only). */
-  lovableApiKey: engineEnv("LOVABLE_API_KEY"),
-  lovableModel: engineEnv("ENGINE_LOVABLE_MODEL", "openai/gpt-6-astra"),
-  lovableGatewayUrl: engineEnv("ENGINE_LOVABLE_GATEWAY_URL", "https://ai.gateway.lovable.dev/v1"),
+  /** Unused — Lovable gateway re-ranker retired with Claude. */
+  lovableApiKey: "",
+  lovableModel: "",
+  lovableGatewayUrl: "",
 
   featureVersion: engineEnv("ENGINE_FEATURE_VERSION", "f4"),
   shortlistSize: envInt("ENGINE_SHORTLIST_SIZE", 12),

@@ -1,9 +1,6 @@
-import { AiUnavailableError as ClaudeUnavailableError, claudeSuggestGifts } from "./ai/claude-suggest.server";
-import { aiRerank, AiUnavailableError as LovableUnavailableError } from "./ai/reranker.server";
 import { toBuyUrl } from "./affiliates/links";
 import { enrichProductImages } from "./catalog/product-images";
 import {
-  catalogEligible,
   emergencyGiftList,
   isAmazonPdpUrl,
   isAmazonSearchUrl,
@@ -13,14 +10,13 @@ import { engineConfig } from "./config";
 import {
   activeModelVersion,
   loadProducts,
-  loadSegmentInsights,
   loadStats,
   maybeTrain,
   saveRecommendations,
   upsertSuggestedProducts,
 } from "./data/engine-repository";
 import { extractProfileFeatures } from "./features/profile";
-import { AiUnavailableError as KeywordAiUnavailableError, keywordSearchRecommend } from "./keyword-recommend.server";
+import { keywordSearchRecommend } from "./keyword-recommend.server";
 import { assignSlotsToAll } from "./scoring/ranker";
 import { scoreProducts } from "./scoring/scorer";
 import type {
@@ -33,12 +29,9 @@ import type {
 } from "./types";
 import { engineError, engineLog, engineWarn, takeEngineLogs, withEngineLogs } from "./utils/logger";
 
-let aiPausedUntil = 0;
-
 /**
- * Questionnaire → keyword phrases → blocklist → store search → 4 slot picks.
- * Falls back to Claude invent / catalog scoring if the keyword path fails.
- * All engineLog* calls during this run are returned as engineLogs for the browser console.
+ * Gift Brain entry: questionnaire → tight search phrases → Amazon/catalog →
+ * answer-fit scoring. Training runs from BUY THIS clicks only (not suggestions).
  */
 export async function recommend(
   profile: RecipientProfile,
@@ -52,10 +45,7 @@ export async function recommend(
   return { ...value, engineLogs: logs };
 }
 
-/**
- * Streams live progress events, then a final result — used by the results page
- * so the UI + browser console update as the engine works.
- */
+/** Streams live progress events, then a final result. */
 export async function* recommendStream(
   profile: RecipientProfile,
   ctx: { searchId: string | null; sessionId: string | null },
@@ -125,83 +115,41 @@ async function recommendInner(
   const modelVersion = `${version}+${engineConfig.featureVersion}`;
   const limit = Math.min(24, Math.max(4, engineConfig.recommendationCount));
 
-  const [products, stats, insights] = await Promise.all([
-    loadProducts(),
-    loadStats(features.segment),
-    loadSegmentInsights(features.segment),
-  ]);
+  const [products, stats] = await Promise.all([loadProducts(), loadStats(features.segment)]);
   const catalogScored = scoreProducts(features, products, stats);
 
-  const useKeyword =
-    (engineConfig.mode === "keyword-search" || engineConfig.mode === "claude-suggest") &&
-    Date.now() > aiPausedUntil;
-
-  if (useKeyword && engineConfig.mode === "keyword-search") {
-    try {
-      const keyed = await keywordSearchRecommend({
-        profile,
-        features,
-        sessionId: ctx.sessionId,
-        statsByProduct: stats,
-      });
-      if (keyed?.items.length) {
-        let items = keyed.items;
-        if (items.length < 4) {
-          items = await ensureNonEmpty(items, catalogScored, features, 4, ctx.sessionId);
-        }
-        await upsertSuggestedProducts(items);
-        engineLog(`engine: keyword-search ok — ${items.length} gifts`);
-        return finalize(items, {
-          recommendationId: crypto.randomUUID(),
-          modelVersion,
-          strategy: "keyword-search",
-          tip: keyed.tip,
-          segment: features.segment,
-          searchId: ctx.searchId,
-          sessionId: ctx.sessionId,
-          breakdowns: breakdownMap(items, catalogScored),
-        });
+  try {
+    const keyed = await keywordSearchRecommend({
+      profile,
+      features,
+      sessionId: ctx.sessionId,
+      statsByProduct: stats,
+      catalogProducts: products,
+    });
+    if (keyed?.items.length) {
+      let items = keyed.items;
+      if (items.length < 4) {
+        items = await ensureNonEmpty(items, catalogScored, features, 4, ctx.sessionId, profile);
       }
-      engineWarn("engine: keyword-search returned no gifts, falling back");
-    } catch (err) {
-      if (err instanceof KeywordAiUnavailableError) aiPausedUntil = Date.now() + 30 * 60_000;
-      engineError("engine: keyword-search failed, falling back", err);
+      await upsertSuggestedProducts(items);
+      engineLog(`engine: gift brain ok — ${items.length} gifts`);
+      return finalize(items, {
+        recommendationId: crypto.randomUUID(),
+        modelVersion,
+        strategy: "gift-brain",
+        tip: keyed.tip,
+        segment: features.segment,
+        searchId: ctx.searchId,
+        sessionId: ctx.sessionId,
+        breakdowns: breakdownMap(items, catalogScored),
+      });
     }
+    engineWarn("engine: gift brain returned no gifts — filling from catalog");
+  } catch (err) {
+    engineError("engine: gift brain failed — filling from catalog", err);
   }
 
-  if (engineConfig.mode === "claude-suggest" && Date.now() > aiPausedUntil) {
-    try {
-      const suggested = await claudeSuggestGifts({
-        profile,
-        features,
-        insights,
-        sessionId: ctx.sessionId,
-      });
-      if (suggested?.items.length) {
-        let merged = await mergeClaudeWithCatalog(suggested.items, catalogScored, limit, features, ctx.sessionId);
-        merged = await ensureNonEmpty(merged, catalogScored, features, limit, ctx.sessionId);
-        const withImages = enrichProductImages(merged);
-        await upsertSuggestedProducts(withImages);
-        engineLog(`engine: claude-suggest ok — ${withImages.length} gifts`);
-        return finalize(withImages, {
-          recommendationId: crypto.randomUUID(),
-          modelVersion,
-          strategy: "claude-catalog",
-          tip: suggested.tip,
-          segment: features.segment,
-          searchId: ctx.searchId,
-          sessionId: ctx.sessionId,
-          breakdowns: breakdownMap(merged, catalogScored),
-        });
-      }
-      engineWarn("engine: Claude returned no usable gifts, falling back to scoring");
-    } catch (err) {
-      if (err instanceof ClaudeUnavailableError) aiPausedUntil = Date.now() + 30 * 60_000;
-      engineError("engine: Claude suggest failed, falling back to scoring", err);
-    }
-  }
-
-  return catalogHybrid(profile, features, modelVersion, ctx, catalogScored, limit);
+  return catalogFill(profile, features, modelVersion, ctx, catalogScored, limit);
 }
 
 async function ensureNonEmpty(
@@ -210,15 +158,25 @@ async function ensureNonEmpty(
   features: ReturnType<typeof extractProfileFeatures>,
   limit: number,
   sessionId: string | null,
+  profile?: RecipientProfile,
 ): Promise<Recommendation[]> {
   if (items.length >= Math.min(4, limit)) return items.slice(0, limit);
   engineWarn(`engine: only ${items.length} gifts — filling from emergency catalog`);
-  let fillerDraft = emergencyGiftList(catalogScored, features, limit * 2);
-  // Child/teen catalogs can be thin — if age filter emptied the pool, allow age-group soft fill.
+  let scoredPool = catalogScored;
+  if (profile && /baby shower/i.test(profile.occasion)) {
+    const babyFirst = catalogScored.filter(
+      (s) =>
+        s.product.occasions?.some((o) => /baby shower/i.test(o)) ||
+        s.product.category.toLowerCase() === "baby" ||
+        /baby|swaddle|diaper|nursery|postpartum/i.test(`${s.product.title} ${s.product.tags.join(" ")}`),
+    );
+    if (babyFirst.length) scoredPool = babyFirst;
+  }
+  let fillerDraft = emergencyGiftList(scoredPool, features, limit * 2);
   if (!fillerDraft.length && (features.ageGroup === "child" || features.ageGroup === "teen")) {
     engineWarn("engine: no age-matched emergency gifts — softening age filter for catalog fill");
     fillerDraft = emergencyGiftList(
-      catalogScored.filter((s) => s.product.ageGroups.includes(features.ageGroup) || s.product.audience === "kids"),
+      scoredPool.filter((s) => s.product.ageGroups.includes(features.ageGroup) || s.product.audience === "kids"),
       { ...features, gender: features.gender },
       limit * 2,
     );
@@ -235,7 +193,6 @@ async function ensureNonEmpty(
     });
     if (merged.length >= limit) break;
   }
-  // Never pad with Amazon /s? search pages — only live /dp/ASINs already in filler.
   return assignSlotsToAll(
     merged.map((m) => ({
       product: m.product,
@@ -246,66 +203,18 @@ async function ensureNonEmpty(
   ).slice(0, limit);
 }
 
-async function mergeClaudeWithCatalog(
-  claudeItems: Recommendation[],
-  catalogScored: ScoredProduct[],
-  limit: number,
-  features: ReturnType<typeof extractProfileFeatures>,
-  sessionId: string | null,
-): Promise<Recommendation[]> {
-  const asScored: ScoredProduct[] = claudeItems.map((item) => ({
-    product: item.product,
-    score: item.score,
-    breakdown: { content: 0.95, budget: 1, behavior: 0, popularity: item.product.popularity / 100, ai: 1 },
-    // Keep Claude's answer-tied sentence intact; formatPickReason avoids double prefixes.
-    reasons: [item.reason || "Because it matches their answers from the questionnaire"],
-  }));
-
-  const seen = new Set(asScored.map((s) => normalizeTitle(s.product.title)));
-  for (const s of catalogScored) {
-    if (!catalogEligible(s.product, features)) continue;
-    const key = normalizeTitle(s.product.title);
-    if (seen.has(key)) continue;
-    seen.add(key);
-    asScored.push(s);
-    if (asScored.length >= limit * 2) break;
-  }
-
-  const ranked = assignSlotsToAll(asScored).slice(0, Math.max(limit * 2, limit));
-  const validated = await validateRecommendations(ranked, { features, sessionId });
-  return assignSlotsToAll(
-    validated.map((item) => ({
-      product: item.product,
-      score: item.score,
-      breakdown: { content: 0.9, budget: 1, behavior: 0, popularity: 0, ai: 1 },
-      reasons: [item.reason],
-    })),
-  )
-    .slice(0, limit)
-    .map((item) => ({
-      ...item,
-      product: {
-        ...item.product,
-        buyUrl: toBuyUrl(item.product.buyUrl, { customId: sessionId }),
-      },
-    }));
-}
-
-function normalizeTitle(title: string) {
-  return title.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
-}
-
 function breakdownMap(items: Recommendation[], catalogScored: ScoredProduct[]) {
   const fromCatalog = new Map(catalogScored.map((s) => [s.product.id, s.breakdown]));
   return new Map(
     items.map((i) => [
       i.product.id,
-      fromCatalog.get(i.product.id) ?? { content: 0.9, budget: 1, behavior: 0, popularity: 0, ai: 1 },
+      fromCatalog.get(i.product.id) ?? { content: 0.9, budget: 1, behavior: 0, popularity: 0, ai: 0 },
     ]),
   );
 }
 
-async function catalogHybrid(
+/** Last-resort catalog scoring when Amazon search returns nothing. */
+async function catalogFill(
   profile: RecipientProfile,
   features: ReturnType<typeof extractProfileFeatures>,
   modelVersion: string,
@@ -313,7 +222,16 @@ async function catalogHybrid(
   scored: ScoredProduct[],
   limit: number,
 ): Promise<RecommendationResult> {
-  let draft = assignSlotsToAll(scored).slice(0, limit * 2);
+  let pool = scored;
+  if (/baby shower/i.test(profile.occasion)) {
+    const baby = scored.filter(
+      (s) =>
+        s.product.occasions?.some((o) => /baby shower/i.test(o)) ||
+        s.product.category.toLowerCase() === "baby",
+    );
+    if (baby.length) pool = baby;
+  }
+  let draft = assignSlotsToAll(pool).slice(0, limit * 2);
   let items = await validateRecommendations(draft, {
     features,
     sessionId: ctx.sessionId,
@@ -335,59 +253,14 @@ async function catalogHybrid(
       },
     }));
 
-  let strategy: RecommendationResult["strategy"] = "scoring";
-  let tip: string | null =
-    "Dominique double-checked the catalog for gifts that fit their answers and budget.";
-
-  if (engineConfig.mode === "catalog-hybrid" && Date.now() > aiPausedUntil) {
-    try {
-      const shortlist = scored.slice(0, engineConfig.shortlistSize);
-      const ai = await aiRerank(profile, shortlist);
-      if (ai) {
-        const byId = new Map(shortlist.map((s) => [s.product.id, s]));
-        const aiItems = ai.picks
-          .map((p, i) => {
-            const s = byId.get(p.productId);
-            if (!s) return null;
-            return {
-              slot: p.slot,
-              rank: i + 1,
-              product: s.product,
-              score: Number(s.score.toFixed(4)),
-              reason: p.reason,
-            } satisfies Recommendation;
-          })
-          .filter((x): x is Recommendation => x !== null);
-        const validatedAi = await validateRecommendations(aiItems, {
-          features,
-          sessionId: ctx.sessionId,
-        });
-        if (validatedAi.length) {
-          items = enrichProductImages(
-            validatedAi.slice(0, limit).map((item, i) => ({
-              ...item,
-              rank: i + 1,
-              product: { ...item.product, buyUrl: toBuyUrl(item.product.buyUrl, { customId: ctx.sessionId }) },
-            })),
-          );
-          tip = ai.tip;
-          strategy = "hybrid-ai";
-        }
-      }
-    } catch (err) {
-      if (err instanceof LovableUnavailableError) aiPausedUntil = Date.now() + 30 * 60_000;
-      engineError("engine: AI re-rank failed, using scoring only", err);
-    }
-  }
-
-  items = await ensureNonEmpty(items, scored, features, limit, ctx.sessionId);
+  items = await ensureNonEmpty(items, pool, features, limit, ctx.sessionId, profile);
   items = enrichProductImages(items);
   const breakdowns = new Map(scored.map((s) => [s.product.id, s.breakdown]));
   return finalize(items, {
     recommendationId: crypto.randomUUID(),
     modelVersion,
-    strategy,
-    tip,
+    strategy: "scoring",
+    tip: "Dominique matched catalog gifts to their answers and budget.",
     segment: features.segment,
     searchId: ctx.searchId,
     sessionId: ctx.sessionId,
@@ -428,7 +301,6 @@ async function finalize(
     maybeTrain(engineConfig.trainEveryMinutes),
   ]);
 
-  // Final safety net: BUY THIS must be amazon.com/dp/ASIN (or non-Amazon experience URL).
   const safeItems = items.filter((i) => {
     const url = i.product.buyUrl;
     if (isAmazonSearchUrl(url)) {
@@ -456,7 +328,6 @@ async function finalize(
     items: safeItems,
     total: safeItems.length,
     pageSize: engineConfig.pageSize,
-    // Outer recommend() overwrites with the full buffer; keep a snapshot here too.
     engineLogs: takeEngineLogs().slice(),
   };
 }

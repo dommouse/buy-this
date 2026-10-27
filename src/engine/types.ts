@@ -2,6 +2,8 @@ export type AgeGroup = "child" | "teen" | "adult";
 export type GiftType = "physical" | "experience" | "giftcard";
 /** Who the product is primarily for — required from AI catalog resolution when known. */
 export type GenderAudience = "women" | "men" | "unisex" | "kids" | "unknown";
+export type WearUseDo = "wear" | "use" | "do" | "";
+export type PriceTier = "$" | "$$" | "$$$" | "$$$$" | "";
 
 export type Product = {
   id: string;
@@ -19,6 +21,16 @@ export type Product = {
   buyUrl: string;
   provider: string;
   popularity: number;
+  /** Catalog Column B — occasion tags (e.g. Birthday, Age 4-9). */
+  occasions?: string[];
+  /** Catalog Column G. */
+  priceTier?: PriceTier;
+  /** Catalog Column H. */
+  relationships?: string[];
+  /** Catalog Column I — personality / parent type. */
+  parentTypes?: string[];
+  /** Teen Wear / Use / Do tag. */
+  wearUseDo?: WearUseDo;
 };
 
 /** Questionnaire answers as the engine sees them (decoupled from the UI type). */
@@ -34,6 +46,32 @@ export type RecipientProfile = {
   budget: string;
   hasKids: string;
   giftType: string;
+  /** Path A–G from questionnaire routing. */
+  path?: string;
+  personality?: string[];
+  parentType?: string;
+  helpWith?: string;
+  firstBaby?: string;
+  childStage?: string;
+  familyNeed?: string;
+  character?: string;
+  funOrLearning?: string;
+  teenStyle?: string;
+  wearUseDo?: string;
+  talkAbout?: string;
+  practicalOrSpecial?: string;
+  feelSeen?: string;
+  howBig?: string;
+  professionPride?: string;
+  howFeel?: string;
+  knowThem?: string;
+  favorites?: string;
+  entertain?: string;
+  homeType?: string;
+  neverBuy?: string;
+  graduationLevel?: string;
+  /** Optional photo data URL for Claude style read. */
+  photoDataUrl?: string | null;
 };
 
 /** Learned per-product stats for a profile segment, produced by training. */
@@ -71,7 +109,7 @@ export type EngineLogEntry = {
 export type RecommendationResult = {
   recommendationId: string | null;
   modelVersion: string;
-  strategy: "keyword-search" | "claude-suggest" | "hybrid-ai" | "scoring" | "claude-catalog";
+  strategy: "gift-brain" | "keyword-search" | "scoring" | "hybrid-ai" | "claude-suggest" | "claude-catalog";
   tip: string | null;
   items: Recommendation[];
   /** Total gifts returned (same as items.length). */
@@ -90,3 +128,20 @@ export type RecommendStreamEvent =
   | { type: "progress"; entry: EngineLogEntry }
   | { type: "result"; result: RecommendationResult }
   | { type: "error"; message: string };
+
+/** Standard search category for retailer adapters. */
+export type SearchCategory =
+  | "TECH"
+  | "FASHION_WOMEN"
+  | "FASHION_MEN"
+  | "FOOD_GOURMET"
+  | "TOYS_KIDS"
+  | "GAMES"
+  | "BEAUTY"
+  | "HOME"
+  | "JEWELRY"
+  | "BOOKS"
+  | "SPORTS"
+  | "OUTDOOR"
+  | "BABY"
+  | "EXPERIENCES";

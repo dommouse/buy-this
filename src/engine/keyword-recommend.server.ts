@@ -1,12 +1,18 @@
-import { AiUnavailableError } from "./ai/claude-client.server";
+import { claudeFinalPick } from "./ai/final-picker.server";
 import { enrichProductImages, extractAsin } from "./catalog/product-images";
 import { validateRecommendations } from "./catalog/product-validator";
-import { answerBounds, genderMismatch, rankByAnswerFit, trendingFitScore } from "./features/fit";
-import type { ProfileFeatures } from "./features/profile";
-import { buildSlotPhrases, filterAndPivotPhrases } from "./keywords";
-import { formatPickReason, SLOTS } from "./scoring/ranker";
+// Side-effect: wires Amazon title→ASIN crawl into live product resolve.
 import { searchAmazonAllSlots, takeLastBatchTip } from "./stores/amazon-search.server";
-import { getActiveStoreAdapters, storeProductToProduct } from "./stores";
+import { recallTrendingMatches } from "./brain/memory";
+import { buildFilterSpec, filterWithFallback, hardFilterCandidates } from "./brain/filters";
+import { buildSearchObjects } from "./brain/search-object";
+import { scoreGiftFit } from "./brain/scorer";
+import { engineConfig } from "./config";
+import { genderMismatch, rankByAnswerFit } from "./features/fit";
+import type { ProfileFeatures } from "./features/profile";
+import { formatPickReason, SLOTS } from "./scoring/ranker";
+import { searchCuratedProducts, setCuratedExtraProducts } from "./stores/curated-search.server";
+import { storeProductToProduct } from "./stores";
 import type { Product, ProductStats, RecipientProfile, Recommendation, Slot } from "./types";
 import { engineLog, engineWarn } from "./utils/logger";
 
@@ -15,12 +21,8 @@ export type KeywordSearchOutcome = {
   items: Recommendation[];
 };
 
-/**
- * Fast local pick: best unused product per slot by answer fit + trending stats.
- * Fills empty slots from the leftover pool so we still return 4 gifts.
- */
 function pickFourSlots(
-  bySlot: Map<Slot, Product[]>,
+  pool: Product[],
   profile: RecipientProfile,
   features: ProfileFeatures,
   phrases: { slot: Slot; phrase: string; angle: string }[],
@@ -30,14 +32,17 @@ function pickFourSlots(
   const usedTitles = new Set<string>();
   const items: Recommendation[] = [];
   const phraseBySlot = new Map(phrases.map((p) => [p.slot, p]));
+  const ranked = rankByAnswerFit(
+    pool.filter((p) => !genderMismatch(p, features.gender, features.ageGroup)),
+    profile,
+    features,
+    statsByProduct,
+  );
 
   for (const slot of SLOTS) {
-    const pool = (bySlot.get(slot) ?? []).filter((p) => !genderMismatch(p, features.gender, features.ageGroup));
-    const ranked = rankByAnswerFit(pool, profile, features, statsByProduct);
     const product = ranked.find((p) => {
       const asin = extractAsin(p.buyUrl)?.toUpperCase() || p.id;
-      const title = p.title.toLowerCase();
-      return !used.has(asin) && !usedTitles.has(title);
+      return !used.has(asin) && !usedTitles.has(p.title.toLowerCase());
     });
     if (!product) continue;
     const asin = extractAsin(product.buyUrl)?.toUpperCase() || product.id;
@@ -45,7 +50,7 @@ function pickFourSlots(
     usedTitles.add(product.title.toLowerCase());
     const phrase = phraseBySlot.get(slot);
     const score = Number(
-      Math.min(0.99, 0.55 + trendingFitScore(product, profile, features, statsByProduct) * 0.12).toFixed(4),
+      Math.min(0.99, 0.5 + scoreGiftFit(product, profile, features, statsByProduct) * 0.45).toFixed(4),
     );
     items.push({
       slot,
@@ -58,214 +63,182 @@ function pickFourSlots(
       ),
     });
   }
-
-  // Fill missing slots from any leftover validated products.
-  if (items.length < 4) {
-    const pool: Product[] = [];
-    for (const list of bySlot.values()) {
-      for (const p of list) {
-        if (!genderMismatch(p, features.gender, features.ageGroup)) pool.push(p);
-      }
-    }
-    const ranked = rankByAnswerFit(pool, profile, features, statsByProduct);
-    for (const slot of SLOTS) {
-      if (items.some((i) => i.slot === slot)) continue;
-      const product = ranked.find((p) => {
-        const asin = extractAsin(p.buyUrl)?.toUpperCase() || p.id;
-        return !used.has(asin) && !usedTitles.has(p.title.toLowerCase());
-      });
-      if (!product) continue;
-      const asin = extractAsin(product.buyUrl)?.toUpperCase() || product.id;
-      used.add(asin);
-      usedTitles.add(product.title.toLowerCase());
-      items.push({
-        slot,
-        rank: items.length + 1,
-        product,
-        score: 0.6,
-        reason: formatPickReason(["Because it still fits their age, budget, and interests"], "backup pick"),
-      });
-    }
-  }
-
   return items.slice(0, 4).map((item, i) => ({ ...item, rank: i + 1 }));
 }
 
 /**
- * Primary gift flow (optimized for live):
- * 1 Claude phrase build → blocklist → 1 Claude batch product search → parallel soft ASIN checks → local 4-slot pick.
- * Avoids 4+ sequential store searches and a second picker Claude call (was causing 1 gift + long waits on live).
+ * Gift Brain — local SearchObjects + dual catalog (curated + Amazon).
+ * Optional Claude final pick when ENGINE_USE_AI=true.
  */
 export async function keywordSearchRecommend(input: {
   profile: RecipientProfile;
   features: ProfileFeatures;
   sessionId: string | null;
-  /** Segment + global click/buy stats from training — ranks trending gifts higher. */
   statsByProduct?: Map<string, ProductStats[]>;
+  catalogProducts?: Product[];
 }): Promise<KeywordSearchOutcome | null> {
-  const { profile, features, sessionId, statsByProduct } = input;
-  const bounds = answerBounds(profile, features);
+  const { profile, features, sessionId, statsByProduct, catalogProducts = [] } = input;
 
-  engineLog("engine: building search phrases");
-  const draftPhrases = await buildSlotPhrases({ profile, features });
-  const phrases = await filterAndPivotPhrases({ phrases: draftPhrases, profile, features });
-  if (!phrases.length) {
-    engineWarn("engine: all search phrases blocked after pivots");
-    return null;
-  }
-
-  engineLog(
-    "engine: search phrases",
-    phrases.map((p) => `${p.slot}: ${p.phrase}`).join(" | "),
-  );
+  engineLog("engine: gift brain start (search objects + dual catalog)");
+  const spec = buildFilterSpec(profile, features);
   engineLog(
     "engine: answer bounds",
-    `age=${bounds.ageRange || bounds.ageGroup} gender=${bounds.gender} budget=${bounds.minUsd ?? "?"}-${bounds.maxUsd ?? "?"}`,
+    `path=${profile.path || "?"} age=${spec.ageRange || features.ageGroup} budget=${spec.priceMin}-${spec.priceMax}`,
   );
 
-  const stores = getActiveStoreAdapters();
-  if (!stores.length) {
-    engineWarn("engine: no store adapters enabled");
-    return null;
+  const searchObjects = buildSearchObjects(profile, features);
+  for (const so of searchObjects) {
+    engineLog(`engine: search object ${so.slot} →`, `${so.keywords} [${so.category}] $${so.priceMin}-${so.priceMax}`);
   }
 
-  const [minUsd, maxUsd] = features.budget ?? [null, null];
+  setCuratedExtraProducts(catalogProducts);
 
-  const batchArgs = {
-    slots: phrases.map((p) => ({ slot: p.slot, phrase: p.phrase, angle: p.angle })),
-    maxPriceUsd: maxUsd,
-    minPriceUsd: minUsd,
-    ageGroup: features.ageGroup,
-    gender: features.gender,
-    interests: bounds.interests.slice(0, 6),
-    ...(features.ageRange ? { ageRange: features.ageRange } : {}),
-    ...(profile.relationship ? { relationship: profile.relationship } : {}),
-    ...(profile.occasion ? { occasion: profile.occasion } : {}),
-    ...(profile.vibe ? { vibe: profile.vibe } : {}),
-  } as const;
+  // Curated / local pool filtered by Dominique column order.
+  const curatedPool = filterWithFallback(catalogProducts, spec, profile, features, 15);
+  engineLog(`engine: curated pool after filters: ${curatedPool.length}`);
 
-  // Single batch Claude call for all slots (big latency win). Retry lighter if aborted.
-  let rawBySlot: Awaited<ReturnType<typeof searchAmazonAllSlots>>;
-  try {
-    rawBySlot = await searchAmazonAllSlots({ ...batchArgs, perSlotLimit: 3 });
-  } catch (err) {
-    const aborted =
-      (err instanceof Error && err.name === "AbortError") ||
-      /aborted|timeout|AbortError/i.test(String((err as Error)?.message ?? err));
-    if (!aborted) throw err;
-    engineWarn("engine: batch search aborted — retrying lighter request");
+  const memory = recallTrendingMatches({
+    profile,
+    features,
+    products: catalogProducts,
+    statsByProduct: statsByProduct ?? new Map(),
+    limit: 6,
+  });
+
+  const wallMin = spec.priceMin;
+  const wallMax = spec.priceMax;
+
+  // Per-slot Amazon + curated keyword hits
+  const candidates: Product[] = [...curatedPool, ...memory];
+  const usedAsins = new Set<string>();
+
+  if (engineConfig.catalogMode !== "local") {
     try {
-      rawBySlot = await searchAmazonAllSlots({ ...batchArgs, perSlotLimit: 2 });
-    } catch (err2) {
-      engineWarn("engine: batch search retry failed", err2);
-      return null;
-    }
-  }
-  const batchTip = takeLastBatchTip();
-
-  // Flatten → validate once in parallel soft-probe path.
-  const draft: Recommendation[] = [];
-  for (const phrase of phrases) {
-    const products = (rawBySlot.get(phrase.slot) ?? []).map(storeProductToProduct);
-    for (const product of products) {
-      draft.push({
-        slot: phrase.slot,
-        rank: draft.length + 1,
-        product,
-        score: 0.7,
-        reason: phrase.angle,
+      const rawBySlot = await searchAmazonAllSlots({
+        slots: searchObjects.map((s) => ({
+          slot: s.slot,
+          phrase: s.keywords,
+          angle: s.category,
+        })),
+        maxPriceUsd: wallMax,
+        minPriceUsd: wallMin,
+        ageGroup: features.ageGroup,
+        gender: features.gender,
+        interests: profile.interests.slice(0, 6),
+        ...(features.ageRange ? { ageRange: features.ageRange } : {}),
+        ...(profile.relationship ? { relationship: profile.relationship } : {}),
+        ...(profile.occasion ? { occasion: profile.occasion } : {}),
+        perSlotLimit: 5,
       });
+      takeLastBatchTip();
+      for (const so of searchObjects) {
+        for (const hit of rawBySlot.get(so.slot) ?? []) {
+          candidates.push(storeProductToProduct(hit));
+        }
+        // Backup keywords if thin
+        const curatedHits = searchCuratedProducts({
+          phrase: so.backup.keywords,
+          maxPriceUsd: wallMax,
+          minPriceUsd: wallMin,
+          ageGroup: features.ageGroup,
+          limit: 4,
+        }).map(storeProductToProduct);
+        candidates.push(...curatedHits);
+      }
+    } catch (err) {
+      engineWarn("engine: Amazon search failed — curated only", err);
+    }
+  } else {
+    for (const so of searchObjects) {
+      candidates.push(
+        ...searchCuratedProducts({
+          phrase: so.keywords,
+          maxPriceUsd: wallMax,
+          minPriceUsd: wallMin,
+          ageGroup: features.ageGroup,
+          limit: 6,
+        }).map(storeProductToProduct),
+      );
     }
   }
 
-  engineLog(`engine: validating ${draft.length} candidates across all slots`);
+  // Dedupe + hard filters
+  const deduped: Product[] = [];
+  const seen = new Set<string>();
+  for (const p of candidates) {
+    const key = (extractAsin(p.buyUrl) || p.id).toUpperCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    deduped.push(p);
+  }
+
+  const filtered = hardFilterCandidates(deduped, spec, profile, features, usedAsins);
+  engineLog(`engine: ${filtered.length} candidates after hard filters`);
+
+  const draft: Recommendation[] = filtered.slice(0, 40).map((product, i) => ({
+    slot: SLOTS[i % SLOTS.length]!,
+    rank: i + 1,
+    product,
+    score: 0.7,
+    reason: "matches answers",
+  }));
+
   const alive = await validateRecommendations(draft, { features, sessionId });
   engineLog(`engine: ${alive.length} candidates passed live checks`);
-
-  // If too thin, one widened batch (soft min price) — still a single Claude call.
-  let tip = batchTip;
-  if (alive.length < 4) {
-    engineWarn("engine: widening search — fewer than 4 validated gifts");
-    const wideRaw = await searchAmazonAllSlots({
-      slots: phrases.map((p) => ({
-        slot: p.slot,
-        phrase: `${p.phrase} gift ideas ${bounds.interests[0] || bounds.vibe || ""}`.replace(/\s+/g, " ").trim(),
-        angle: p.angle,
-      })),
-      maxPriceUsd: maxUsd,
-      minPriceUsd: null,
-      ageGroup: features.ageGroup,
-      gender: features.gender,
-      interests: bounds.interests.slice(0, 6),
-      perSlotLimit: 5,
-      ...(features.ageRange ? { ageRange: features.ageRange } : {}),
-      ...(profile.relationship ? { relationship: profile.relationship } : {}),
-      ...(profile.occasion ? { occasion: profile.occasion } : {}),
-      ...(profile.vibe ? { vibe: profile.vibe } : {}),
-    });
-    tip = takeLastBatchTip() || tip;
-    const moreDraft: Recommendation[] = [];
-    const seenAsin = new Set(alive.map((a) => extractAsin(a.product.buyUrl)?.toUpperCase()).filter(Boolean) as string[]);
-    for (const phrase of phrases) {
-      for (const hit of wideRaw.get(phrase.slot) ?? []) {
-        const product = storeProductToProduct(hit);
-        const asin = (hit.externalId || extractAsin(product.buyUrl) || "").toUpperCase();
-        if (asin && seenAsin.has(asin)) continue;
-        if (asin) seenAsin.add(asin);
-        moreDraft.push({
-          slot: phrase.slot,
-          rank: moreDraft.length + 1,
-          product,
-          score: 0.65,
-          reason: phrase.angle,
-        });
-      }
-    }
-    engineLog(`engine: validating ${moreDraft.length} widened candidates`);
-    const moreAlive = await validateRecommendations(moreDraft, { features, sessionId });
-    engineLog(`engine: widened found ${moreAlive.length} validated`);
-    alive.push(...moreAlive);
+  engineLog(
+    `engine: live diagnostic — path=${profile.path || "?"} occasion=${profile.occasion || "?"} personality=${(profile.personality || []).join("|") || "—"} talkAbout=${(profile.talkAbout || "").slice(0, 60) || "—"} survivors=${alive.length}/${filtered.length}`,
+  );
+  if (alive.length) {
+    engineLog(
+      `engine: survivor titles — ${alive
+        .slice(0, 8)
+        .map((a) => a.product.title.slice(0, 48))
+        .join(" | ")}`,
+    );
   }
 
   if (!alive.length) {
-    engineWarn("engine: store search returned no products for any slot");
+    engineWarn("engine: no products survived validation");
     return null;
   }
 
-  // Group validated products back by slot for picking.
-  const bySlot = new Map<Slot, Product[]>();
-  for (const slot of SLOTS) bySlot.set(slot, []);
-  for (const item of alive) {
-    const list = bySlot.get(item.slot as Slot) ?? [];
-    list.push(item.product);
-    bySlot.set(item.slot as Slot, list);
+  const aliveProducts = alive.map((a) => a.product);
+
+  // Hybrid Claude final pick
+  if (engineConfig.useAi && engineConfig.anthropicApiKey) {
+    const claude = await claudeFinalPick({
+      profile,
+      candidates: aliveProducts,
+      ...(profile.photoDataUrl !== undefined ? { photoDataUrl: profile.photoDataUrl } : {}),
+    });
+    if (claude?.items.length === 4) {
+      const items = enrichProductImages(claude.items);
+      engineLog("engine: gift brain ok — Claude final pick");
+      return { tip: claude.tip, items };
+    }
+    engineWarn("engine: Claude final pick skipped — local pick");
   }
 
-  engineLog("engine: picking best gifts for 4 slots (answer fit + trending)");
+  engineLog("engine: picking best gifts locally (answer fit + trending)");
   const picked = pickFourSlots(
-    bySlot,
+    aliveProducts,
     profile,
     features,
-    phrases.map((p) => ({ slot: p.slot, phrase: p.phrase, angle: p.angle })),
+    searchObjects.map((s) => ({ slot: s.slot, phrase: s.keywords, angle: s.category })),
     statsByProduct,
   );
 
   if (!picked.length) {
-    engineWarn("engine: keyword picks failed ASIN/budget validation");
+    engineWarn("engine: gift brain could not pick gifts");
     return null;
   }
 
-  engineLog(`engine: final validation of picked gifts`);
-  // Products already passed soft probe — skip a second full probe pass (latency).
   const items = enrichProductImages(picked);
-  engineLog(`engine: keyword-search ok — ${items.length} gifts`);
-
+  engineLog(`engine: gift brain ok — ${items.length} gifts`);
   return {
-    tip:
-      tip ||
-      "Dominique matched these to their answers — a short handwritten note makes any of them feel more personal.",
+    tip: "Dominique matched these to their answers — a short handwritten note makes any of them feel more personal.",
     items,
   };
 }
 
-export { AiUnavailableError };
+export class AiUnavailableError extends Error {}

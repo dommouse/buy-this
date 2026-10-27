@@ -3,8 +3,10 @@ import { matchesAvoidCategory } from "../config";
 import { genderMismatch } from "../features/fit";
 import type { ProfileFeatures } from "../features/profile";
 import type { Product, Recommendation } from "../types";
-import { engineWarn } from "../utils/logger";
+import { engineLog, engineWarn } from "../utils/logger";
+import { isPlaceholderAmazonTitle, resolveAsinTitles } from "./asin-title.server";
 import { amazonAsinImageUrl, extractAsin } from "./product-images";
+import { applyLiveHit, resolveToLiveProduct } from "./resolve-live.server";
 
 /** True when product is in engineConfig.avoidCategories (candles, perfume, etc.). */
 export function isAvoidedGiftCategory(product: Product): boolean {
@@ -160,9 +162,14 @@ export type ValidateOptions = {
   requireAsinForShopGoods?: boolean;
 };
 
-function normalizeAliveAsin(p: Product, asin: string): Product {
+function normalizeAliveAsin(p: Product, asin: string, resolvedTitle?: string | null): Product {
+  const title =
+    resolvedTitle && resolvedTitle.length >= 6
+      ? resolvedTitle.slice(0, 140)
+      : p.title;
   return {
     ...p,
+    title,
     id: p.id.startsWith("amz-") || p.id.startsWith("claude-") ? p.id : `amz-${asin.toLowerCase()}`,
     buyUrl: amazonAsinUrl(asin),
     imageUrl: amazonAsinImageUrl(asin, 300),
@@ -187,7 +194,9 @@ function ageInappropriate(p: Product, features: ProfileFeatures): boolean {
  * Normalize + gate gifts:
  * - age must match questionnaire (strict)
  * - price: max hard, min soft
- * - physical / gift cards: ONLY live amazon.com/dp/ASIN — never /s? search pages
+ * - physical / gift cards: prefer live amazon.com/dp/ASIN
+ * - search-URL / missing / dead ASINs are RE-RESOLVED via curated JSON + Amazon crawl
+ *   instead of being dropped (that was wiping the most relevant curated gifts)
  */
 export async function validateRecommendations(
   items: Recommendation[],
@@ -198,8 +207,13 @@ export async function validateRecommendations(
   const seenAsin = new Set<string>();
   const seenTitle = new Set<string>();
 
-  // Soft filters first, then probe remaining ASINs in parallel (big latency win).
-  type SoftOk = { item: Recommendation; asin: string | null; shopGood: boolean };
+  type SoftOk = {
+    item: Recommendation;
+    asin: string | null;
+    shopGood: boolean;
+    /** Needs title→ASIN resolve (search URL, empty buy link, or missing ASIN). */
+    needsResolve: boolean;
+  };
   const softOk: SoftOk[] = [];
 
   for (const item of items) {
@@ -207,7 +221,7 @@ export async function validateRecommendations(
     const titleKey = p.title.trim().toLowerCase();
     if (!titleKey || seenTitle.has(titleKey)) continue;
     if (!priceInBudget(p.price, opts.features.budget)) continue;
-    if (!p.ageGroups.includes(opts.features.ageGroup)) continue;
+    if (p.ageGroups.length && !p.ageGroups.includes(opts.features.ageGroup)) continue;
     if (ageInappropriate(p, opts.features)) continue;
     if (genderMismatch(p, opts.features.gender, opts.features.ageGroup)) {
       engineWarn("engine: dropping gender-mismatched gift", p.title);
@@ -226,73 +240,167 @@ export async function validateRecommendations(
     );
     if (avoidHit) continue;
 
-    if (isAmazonSearchUrl(p.buyUrl)) {
-      engineWarn("engine: dropping Amazon search URL (need /dp/ASIN)", p.title);
+    const shopGood = p.giftType === "physical" || p.giftType === "giftcard";
+    const asin = extractAsin(p.buyUrl) || extractAsin(p.imageUrl || "");
+    const searchUrl = !p.buyUrl || isAmazonSearchUrl(p.buyUrl);
+    const nonPdpAmazon = Boolean(p.buyUrl) && isAmazonUrlish(p.buyUrl) && !isAmazonPdpUrl(p.buyUrl) && !isAmazonSearchUrl(p.buyUrl);
+
+    // Search URLs / empty links → queue resolve (do NOT drop relevant curated gifts).
+    if (searchUrl || (shopGood && requireAsin && (!asin || !isValidAsinFormat(asin)))) {
+      seenTitle.add(titleKey);
+      softOk.push({ item, asin: null, shopGood: true, needsResolve: true });
       continue;
     }
 
-    const shopGood = p.giftType === "physical" || p.giftType === "giftcard";
-    const asin = extractAsin(p.buyUrl) || extractAsin(p.imageUrl || "");
+    if (nonPdpAmazon && !asin) {
+      seenTitle.add(titleKey);
+      softOk.push({ item, asin: null, shopGood: true, needsResolve: true });
+      continue;
+    }
 
-    if (shopGood && requireAsin) {
-      if (!asin || !isValidAsinFormat(asin)) {
-        engineWarn("engine: dropping gift without live ASIN", p.title);
-        continue;
-      }
+    if (shopGood && requireAsin && asin && isValidAsinFormat(asin)) {
       if (seenAsin.has(asin)) continue;
       seenAsin.add(asin);
       seenTitle.add(titleKey);
-      softOk.push({ item, asin, shopGood: true });
+      softOk.push({ item, asin, shopGood: true, needsResolve: false });
       continue;
     }
 
-    if (!p.buyUrl.startsWith("http")) continue;
+    if (!p.buyUrl.startsWith("http")) {
+      seenTitle.add(titleKey);
+      softOk.push({ item, asin: null, shopGood: true, needsResolve: true });
+      continue;
+    }
 
     if (isAmazonPdpUrl(p.buyUrl) && asin) {
       if (seenAsin.has(asin)) continue;
       seenAsin.add(asin);
       seenTitle.add(titleKey);
-      softOk.push({ item, asin, shopGood: false });
-      continue;
-    }
-
-    if (isAmazonUrlish(p.buyUrl) && !isAmazonPdpUrl(p.buyUrl)) {
-      engineWarn("engine: dropping non-PDP Amazon URL", p.title, p.buyUrl.slice(0, 80));
+      softOk.push({ item, asin, shopGood: false, needsResolve: false });
       continue;
     }
 
     seenTitle.add(titleKey);
-    softOk.push({ item, asin: asin && isValidAsinFormat(asin) ? asin : null, shopGood: false });
+    softOk.push({
+      item,
+      asin: asin && isValidAsinFormat(asin) ? asin : null,
+      shopGood: false,
+      needsResolve: !asin,
+    });
   }
 
-  const toProbe = softOk.map((s) => s.asin).filter((a): a is string => !!a);
+  // Resolve search-URL / missing-ASIN gifts via curated JSON + Amazon crawl (capped).
+  const toResolve = softOk.filter((s) => s.needsResolve).slice(0, 12);
+  if (toResolve.length) {
+    engineLog(`engine: resolving ${toResolve.length} gifts without live /dp (curated JSON + Amazon search)`);
+  }
+  await mapPool(toResolve, 4, async (row) => {
+    const hit = await resolveToLiveProduct(row.item.product, opts.features.ageGroup);
+    if (!hit) {
+      engineWarn("engine: could not resolve live ASIN for", row.item.product.title);
+      return;
+    }
+    if (seenAsin.has(hit.asin)) {
+      engineWarn("engine: resolved ASIN already used", hit.asin, row.item.product.title);
+      return;
+    }
+    seenAsin.add(hit.asin);
+    row.asin = hit.asin;
+    row.needsResolve = false;
+    row.item = {
+      ...row.item,
+      product: applyLiveHit(row.item.product, hit),
+    };
+    engineLog(
+      `engine: resolved “${row.item.product.title.slice(0, 42)}” → ${hit.asin} (${hit.source})`,
+    );
+  });
+
+  const afterResolve = softOk.filter((s) => !(s.needsResolve && requireAsin && s.shopGood));
+
+  const toProbe = afterResolve.map((s) => s.asin).filter((a): a is string => !!a);
   const statuses = await probeAsinsParallel(toProbe, 8);
 
-  for (const row of softOk) {
+  // Dead ASINs → try re-resolve by title before dropping.
+  const deadRows = afterResolve.filter(
+    (s) => s.asin && (statuses.get(s.asin) ?? "unknown") === "dead",
+  );
+  if (deadRows.length) {
+    engineLog(`engine: re-resolving ${deadRows.length} dead ASIN(s) via title search`);
+  }
+  await mapPool(deadRows.slice(0, 8), 3, async (row) => {
+    const oldAsin = row.asin!;
+    const hit = await resolveToLiveProduct(row.item.product, opts.features.ageGroup);
+    if (!hit || hit.asin === oldAsin) {
+      engineWarn(`engine: dead ASIN could not be replaced`, oldAsin, row.item.product.title);
+      row.asin = null;
+      return;
+    }
+    if (seenAsin.has(hit.asin) && hit.asin !== oldAsin) {
+      row.asin = null;
+      return;
+    }
+    seenAsin.delete(oldAsin);
+    seenAsin.add(hit.asin);
+    statuses.set(hit.asin, "alive");
+    row.asin = hit.asin;
+    row.item = { ...row.item, product: applyLiveHit(row.item.product, hit) };
+    engineLog(`engine: replaced dead ${oldAsin} → ${hit.asin} (${hit.source})`);
+  });
+
+  const needTitle = afterResolve
+    .filter((s) => s.asin && isPlaceholderAmazonTitle(s.item.product.title, s.asin))
+    .map((s) => s.asin!)
+    .filter((a) => (statuses.get(a) ?? "unknown") !== "dead");
+  const resolvedTitles = needTitle.length ? await resolveAsinTitles(needTitle, 4) : new Map<string, string>();
+  if (resolvedTitles.size) {
+    engineLog(`engine: filled ${resolvedTitles.size} product titles from Amazon PDP`);
+  }
+
+  for (const row of afterResolve) {
     const p = row.item.product;
     if (row.asin && (row.shopGood || isAmazonPdpUrl(p.buyUrl))) {
       const status = statuses.get(row.asin) ?? "unknown";
-      if (status === "dead") {
-        engineWarn(`engine: dropping dead ASIN (BUY THIS requires live /dp)`, row.asin, p.title);
+      if (status === "dead" || !row.asin) {
+        engineWarn(`engine: skipping unrecovered dead ASIN`, row.asin || "?", p.title);
         continue;
       }
       if (status === "unknown") {
         engineWarn(`engine: soft-keeping unknown ASIN (CDN/bot wall)`, row.asin, p.title);
       }
-      out.push({ ...row.item, product: normalizeAliveAsin(p, row.asin) });
+      const realTitle = resolvedTitles.get(row.asin.toUpperCase()) ?? null;
+      out.push({ ...row.item, product: normalizeAliveAsin(p, row.asin, realTitle) });
       continue;
     }
 
+    if (requireAsin && row.shopGood && !row.asin) continue;
+
+    const realTitle = row.asin ? resolvedTitles.get(row.asin.toUpperCase()) : null;
     out.push({
       ...row.item,
       product: {
         ...p,
+        ...(realTitle ? { title: realTitle.slice(0, 140) } : {}),
         imageUrl: row.asin ? amazonAsinImageUrl(row.asin, 300) : p.imageUrl,
       },
     });
   }
 
   return out;
+}
+
+/** Limited-concurrency async map. */
+async function mapPool<T>(items: T[], concurrency: number, fn: (item: T) => Promise<void>) {
+  let i = 0;
+  async function worker() {
+    while (i < items.length) {
+      const idx = i++;
+      await fn(items[idx]!);
+    }
+  }
+  await Promise.all(
+    Array.from({ length: Math.min(concurrency, Math.max(1, items.length)) }, () => worker()),
+  );
 }
 
 function isAmazonUrlish(url: string): boolean {

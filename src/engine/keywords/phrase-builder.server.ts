@@ -1,43 +1,100 @@
-import { callClaude, extractJsonObject } from "../ai/claude-client.server";
-import { engineConfig } from "../config";
 import { answerBounds, genderSearchCue } from "../features/fit";
 import type { ProfileFeatures } from "../features/profile";
 import { SLOTS } from "../scoring/ranker";
-import type { RecipientProfile, Slot } from "../types";
-import { engineWarn } from "../utils/logger";
+import type { AgeGroup, RecipientProfile, Slot } from "../types";
+import { engineLog, engineWarn } from "../utils/logger";
 import { findBlockHits, type BlockHit } from "./filter";
+import {
+  keywordsForInterest,
+  keywordsForVibe,
+  tokensFromWants,
+  type InterestKeywordSet,
+} from "./interest-keywords";
 import type { SlotPhrase } from "./types";
 
-function avoidedLabels(): string {
-  return engineConfig.avoidCategories.map((c) => c.label).join(", ");
-}
-
-const YEAR = new Date().getFullYear();
 const MAX_PIVOTS = 3;
 
-function budgetHint(features: ProfileFeatures, budgetLabel: string): string {
-  if (!features.budget) return budgetLabel || "flexible budget";
+/** Short budget cue Amazon understands — omit when unknown. */
+function budgetCue(features: ProfileFeatures): string {
+  if (!features.budget) return "";
   const [, max] = features.budget;
-  return `under ${max}`;
+  if (max == null || max >= 5000) return "";
+  return `under $${max}`;
 }
 
-function slotIntent(slot: Slot): string {
+/** Kids/teens need age in the query; adults rarely do. */
+function ageCue(ageGroup: AgeGroup, ageRange: string): string {
+  if (ageGroup === "child" && ageRange) {
+    if (/under\s*1/i.test(ageRange)) return "baby toddler";
+    return `ages ${ageRange.replace(/\s+/g, "")}`;
+  }
+  if (ageGroup === "teen") return "teen";
+  return "";
+}
+
+function giftTypeCue(giftType: ProfileFeatures["giftType"]): string {
+  if (giftType === "giftcard") return "gift card";
+  if (giftType === "experience") return "experience ticket class";
+  return "";
+}
+
+function pickCore(slot: Slot, sets: InterestKeywordSet[], vibeKeys: string[], wantTokens: string[]): string {
+  const primary = sets[0];
+  const secondary = sets[1] || sets[0];
+  const tertiary = sets[2] || sets[1] || sets[0];
+
   switch (slot) {
     case "The One":
-      return "best overall fit — the gift that just lands";
+      // User wants first, else primary interest product term.
+      if (wantTokens.length >= 2) return wantTokens.slice(0, 3).join(" ");
+      if (wantTokens.length === 1 && primary) return `${wantTokens[0]} ${primary.primary[0]}`;
+      return primary?.primary[0] || vibeKeys[0] || "popular item";
     case "The Wow":
-      return "memorable showstopper with delight factor";
+      return primary?.premium[0] || secondary?.premium[0] || primary?.primary[1] || "premium gift";
     case "The Smart Pick":
-      return "practical thoughtful gift that still feels special";
+      return primary?.practical[0] || secondary?.practical[0] || primary?.primary[0] || "useful everyday";
     case "The Wildcard":
-      return "unexpected delightful surprise angle";
+      return (
+        secondary?.primary[0] ||
+        tertiary?.primary[0] ||
+        vibeKeys[0] ||
+        primary?.primary[1] ||
+        primary?.primary[0] ||
+        "unique find"
+      );
   }
 }
 
 /**
- * AI builds one smart search phrase per gift slot from the questionnaire.
- * Phrases are store-agnostic (no Amazon/ASIN) — stores consume them later.
- * Age, budget, and gender (when answered) are HARD cues in every phrase.
+ * Build a tight Amazon query:
+ *   [product keywords] [for women|men|boys|girls] [ages …] [under $N]
+ * No year, occasion, relationship, or vague "gift ideas".
+ */
+function buildTightPhrase(parts: {
+  core: string;
+  who: string | null;
+  age: string;
+  budget: string;
+  giftType: string;
+}): string {
+  const raw = [parts.core, parts.who || "", parts.age, parts.giftType, parts.budget]
+    .filter(Boolean)
+    .join(" ")
+    .replace(/["']/g, "")
+    .replace(/\s+/g, " ")
+    .trim()
+    .toLowerCase();
+
+  // Drop leftover filler if any slipped in from free text.
+  return raw
+    .replace(/\b(gift ideas?|best gifts?|presents?|202\d|deluxe|wow|surprise)\b/gi, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, 100);
+}
+
+/**
+ * Gift Brain phrase builder — answer keywords only, Amazon-ready.
  */
 export async function buildSlotPhrases(input: {
   profile: RecipientProfile;
@@ -45,134 +102,33 @@ export async function buildSlotPhrases(input: {
 }): Promise<SlotPhrase[]> {
   const { profile, features } = input;
   const bounds = answerBounds(profile, features);
-  const budget = budgetHint(features, profile.budget);
-  const whoCue = genderSearchCue(features.ageGroup, bounds.gender);
-  const genderCue = whoCue
-    ? features.ageGroup === "child" || features.ageGroup === "teen"
-      ? `CRITICAL: recipient is a ${features.ageGroup} (age ${bounds.ageRange}). Include "${whoCue}" in phrases. NEVER say "for men" or "for women" for kids/teens.`
-      : `Include gender cue "${whoCue}" in every phrase.`
-    : "Gender was not selected — keep phrases gender-neutral / unisex.";
+  const interests = bounds.interests.slice(0, 3);
+  const sets = interests.map(keywordsForInterest);
+  const vibeKeys = keywordsForVibe(profile.vibe || "");
+  const wantTokens = tokensFromWants(profile.wants || "");
+  const who = genderSearchCue(features.ageGroup, bounds.gender);
+  const age = ageCue(features.ageGroup, bounds.ageRange);
+  const budget = budgetCue(features);
+  const giftType = giftTypeCue(features.giftType);
 
-  const system =
-    "You are Dominique, keyword brain for BUY THIS. " +
-    "Build SHORT Amazon-style search phrases from questionnaire answers — not product titles, not ASINs. " +
-    "HARD BOUNDS (must appear as cues in every phrase): " +
-    `age (${bounds.ageRange || bounds.ageGroup}), budget ("${budget}"), and gender when answered. ` +
-    `${genderCue} ` +
-    `Also weave relationship, occasion, vibe, and top interests. Year ${YEAR} when it helps. ` +
-    (features.ageGroup === "child"
-      ? `Example: creative building toys for boys ages 3-5 under 25 birthday. `
-      : "Example: trending kitchen gadget for women 30s under 100 birthday. ") +
-    "Each of the 4 slots needs a DISTINCT product ANGLE (different category/interest) so results do not repeat. " +
-    "Never suggest filler gifts (mugs, socks). " +
-    `NEVER suggest these avoided categories: ${avoidedLabels()}. ` +
-    "Return ONLY JSON: {\"phrases\":[{\"slot\":\"The One|The Wow|The Smart Pick|The Wildcard\",\"phrase\":\"...\",\"angle\":\"max 12 words\"}]}.";
+  engineLog("engine: building search phrases (tight keywords)");
 
-  const prompt = JSON.stringify({
-    hardBounds: {
-      ageRange: bounds.ageRange,
-      ageGroup: bounds.ageGroup,
-      gender: bounds.gender,
-      budgetHint: budget,
-      minUsd: bounds.minUsd,
-      maxUsd: bounds.maxUsd,
-      relationship: bounds.relationship,
-      occasion: bounds.occasion,
-    },
-    softSignals: {
-      vibe: bounds.vibe,
-      interests: bounds.interests,
-      wants: bounds.wants,
-      avoid: bounds.avoid,
-      giftType: bounds.giftType,
-      hasKids: bounds.hasKids,
-    },
-    slots: SLOTS.map((slot) => ({ slot, intent: slotIntent(slot) })),
-  });
-
-  const text = await callClaude(system, prompt);
-  const raw = extractJsonObject(text);
-  if (!raw) throw new Error("Claude returned no phrase JSON");
-  const parsed = JSON.parse(raw) as {
-    phrases?: { slot?: string; phrase?: string; angle?: string }[];
-  };
-  const bySlot = new Map<Slot, SlotPhrase>();
-  for (const row of parsed.phrases ?? []) {
-    const slot = SLOTS.find((s) => s === row.slot);
-    let phrase = String(row.phrase ?? "")
-      .replace(/["']/g, "")
-      .replace(/\s+/g, " ")
-      .trim()
-      .slice(0, 120);
-    if (!slot || !phrase) continue;
-    phrase = ensureBoundCues(phrase, bounds, budget, features.ageGroup);
-    bySlot.set(slot, { slot, phrase, angle: String(row.angle ?? "").slice(0, 80), pivotCount: 0 });
-  }
-
-  // Ensure all 4 slots exist with a deterministic fallback phrase.
   const out: SlotPhrase[] = [];
   for (const slot of SLOTS) {
-    const existing = bySlot.get(slot);
-    if (existing) {
-      out.push(existing);
-      continue;
-    }
-    const interest =
-      profile.interests[0] ||
-      profile.vibe ||
-      (features.ageGroup === "child" ? "toys" : "gift");
-    const who = [genderSearchCue(features.ageGroup, bounds.gender), features.ageRange || features.ageGroup]
-      .filter(Boolean)
-      .join(" ");
-    const phrase = ensureBoundCues(
-      `${interest} ${who} ${profile.occasion} ${budget} ${YEAR}`.replace(/\s+/g, " ").trim(),
-      bounds,
-      budget,
-      features.ageGroup,
-    );
+    const core = pickCore(slot, sets, vibeKeys, wantTokens);
+    const phrase = buildTightPhrase({ core, who, age, budget, giftType });
     out.push({
       slot,
       phrase,
-      angle: slotIntent(slot),
+      angle: core.slice(0, 80),
       pivotCount: 0,
     });
+    engineLog(`engine: phrase ${slot} →`, phrase);
   }
   return out;
 }
 
-/** Append missing age / budget / gender cues so store search always sees hard bounds. */
-function ensureBoundCues(
-  phrase: string,
-  bounds: ReturnType<typeof answerBounds>,
-  budget: string,
-  ageGroup: import("../types").AgeGroup = "adult",
-): string {
-  let p = phrase
-    // Strip adult gender cues wrongly applied to kids (e.g. "toys for men ages 3-5").
-    .replace(/\bfor men\b/gi, ageGroup === "child" || ageGroup === "teen" ? "for boys" : "for men")
-    .replace(/\bfor women\b/gi, ageGroup === "child" || ageGroup === "teen" ? "for girls" : "for women");
-  const lower = p.toLowerCase();
-  const cue = genderSearchCue(ageGroup, bounds.gender);
-  if (cue && !lower.includes(cue.toLowerCase())) {
-    if (ageGroup === "child" || ageGroup === "teen") {
-      if (cue.includes("girl") && !/\b(girl|girls)\b/i.test(lower)) p = `${p} ${cue}`;
-      if (cue.includes("boy") && !/\b(boy|boys)\b/i.test(lower)) p = `${p} ${cue}`;
-    } else if (bounds.genderLabel === "woman" && !/\b(women|woman|ladies|female)\b/i.test(lower)) {
-      p = `${p} ${cue}`;
-    } else if (bounds.genderLabel === "man" && !/\b(men|man|male)\b/i.test(lower)) {
-      p = `${p} ${cue}`;
-    }
-  }
-  if (bounds.ageRange && !p.toLowerCase().includes(bounds.ageRange.toLowerCase())) {
-    p = `${p} ${bounds.ageRange}`;
-  }
-  if (budget && !/\bunder\s+\d+/i.test(p) && !p.toLowerCase().includes(budget.toLowerCase())) {
-    p = `${p} ${budget}`;
-  }
-  return p.replace(/\s+/g, " ").trim().slice(0, 140);
-}
-
-/** AI rethinks a blocked phrase — does not just delete the blocked word. */
+/** Template pivot — swap to next keyword angle, still tight. */
 export async function pivotBlockedPhrase(input: {
   blocked: SlotPhrase;
   hits: BlockHit[];
@@ -180,55 +136,37 @@ export async function pivotBlockedPhrase(input: {
   features: ProfileFeatures;
   otherPhrases: string[];
 }): Promise<SlotPhrase> {
-  const { blocked, hits, profile, features, otherPhrases } = input;
+  const { blocked, profile, features } = input;
   const bounds = answerBounds(profile, features);
-  const budget = budgetHint(features, profile.budget);
-  const system =
-    "You are Dominique. A gift search phrase hit our block list. " +
-    "Do NOT just delete the blocked words — rethink the gift ANGLE for this slot. " +
-    "Keep HARD bounds: age, budget, and gender (when answered). " +
-    "Return a NEW short search phrase with a different creative direction that still fits the questionnaire. " +
-    "Return ONLY JSON: {\"phrase\":\"...\",\"angle\":\"max 12 words\"}.";
+  const sets = bounds.interests.slice(0, 3).map(keywordsForInterest);
+  const vibeKeys = keywordsForVibe(profile.vibe || "");
+  const wantTokens = tokensFromWants(profile.wants || "");
+  const who = genderSearchCue(features.ageGroup, bounds.gender);
+  const age = ageCue(features.ageGroup, bounds.ageRange);
+  const budget = budgetCue(features);
+  const giftType = giftTypeCue(features.giftType);
 
-  const prompt = JSON.stringify({
-    slot: blocked.slot,
-    blockedPhrase: blocked.phrase,
-    previousAngle: blocked.angle,
-    blockHits: hits,
-    hardBounds: {
-      ageRange: bounds.ageRange,
-      ageGroup: bounds.ageGroup,
-      gender: bounds.gender,
-      budgetHint: budget,
-    },
-    questionnaire: profile,
-    avoidDuplicating: otherPhrases,
-    year: YEAR,
-  });
+  const primary = sets[0];
+  const pool = [
+    ...(primary?.primary ?? []),
+    ...(primary?.practical ?? []),
+    ...(primary?.premium ?? []),
+    ...(sets[1]?.primary ?? []),
+    ...vibeKeys,
+    ...wantTokens,
+  ].filter(Boolean);
 
-  const text = await callClaude(system, prompt, 25_000);
-  const raw = extractJsonObject(text);
-  if (!raw) throw new Error("Claude pivot returned no JSON");
-  const parsed = JSON.parse(raw) as { phrase?: string; angle?: string };
-  let phrase = String(parsed.phrase ?? "")
-    .replace(/["']/g, "")
-    .replace(/\s+/g, " ")
-    .trim()
-    .slice(0, 120);
-  if (!phrase) throw new Error("Claude pivot returned empty phrase");
-  phrase = ensureBoundCues(phrase, bounds, budget, features.ageGroup);
+  const next = pool[Math.min(blocked.pivotCount + 1, Math.max(0, pool.length - 1))] || "popular item";
+  const phrase = buildTightPhrase({ core: next, who, age, budget, giftType });
+  engineWarn(`engine: phrase pivoted for ${blocked.slot} →`, phrase);
   return {
     slot: blocked.slot,
     phrase,
-    angle: String(parsed.angle ?? blocked.angle).slice(0, 80),
+    angle: next.slice(0, 80),
     pivotCount: blocked.pivotCount + 1,
   };
 }
 
-/**
- * Run block-list filter; pivot until clean or max pivots.
- * Returns only phrases that clear the filter.
- */
 export async function filterAndPivotPhrases(input: {
   phrases: SlotPhrase[];
   profile: RecipientProfile;

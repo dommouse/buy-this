@@ -1,36 +1,96 @@
 import { createContext, useContext, useState, type ReactNode } from "react";
 
+import type { QuestionnairePath } from "@/questionnaire/types";
+
+export type GiftPhoto = { name: string; type: string; size: number; dataUrl: string } | null;
+
+/**
+ * Answers from the path-routed questionnaire.
+ * Legacy fields (gender, vibe, wants, avoid, hasKids, giftType) kept for engine compat.
+ */
 export type GiftAnswers = {
-  relationship: string;
-  relationshipOther: string;
+  path: QuestionnairePath | "";
   occasion: string;
   occasionOther: string;
+  relationship: string;
+  relationshipOther: string;
   ageRange: string;
+  graduationLevel: string;
+  budget: string;
   gender: string;
   vibe: string;
   interests: string[];
+  personality: string[];
   wants: string;
   avoid: string;
-  budget: string;
   hasKids: string;
   giftType: string;
-  photo: { name: string; type: string; size: number; dataUrl: string } | null;
+  /** Path A */
+  firstBaby: string;
+  parentType: string;
+  helpWith: string;
+  /** Path B/C */
+  childStage: string;
+  familyNeed: string;
+  character: string;
+  funOrLearning: string;
+  /** Path D */
+  teenStyle: string;
+  wearUseDo: string;
+  /** Path E */
+  talkAbout: string;
+  practicalOrSpecial: string;
+  feelSeen: string;
+  howBig: string;
+  professionPride: string;
+  howFeel: string;
+  /** Path F */
+  knowThem: string;
+  favorites: string;
+  /** Path G */
+  entertain: string;
+  homeType: string;
+  neverBuy: string;
+  photo: GiftPhoto;
 };
 
 export const emptyAnswers: GiftAnswers = {
-  relationship: "",
-  relationshipOther: "",
+  path: "",
   occasion: "",
   occasionOther: "",
+  relationship: "",
+  relationshipOther: "",
   ageRange: "",
+  graduationLevel: "",
+  budget: "",
   gender: "",
   vibe: "",
   interests: [],
+  personality: [],
   wants: "",
   avoid: "",
-  budget: "",
   hasKids: "",
   giftType: "",
+  firstBaby: "",
+  parentType: "",
+  helpWith: "",
+  childStage: "",
+  familyNeed: "",
+  character: "",
+  funOrLearning: "",
+  teenStyle: "",
+  wearUseDo: "",
+  talkAbout: "",
+  practicalOrSpecial: "",
+  feelSeen: "",
+  howBig: "",
+  professionPride: "",
+  howFeel: "",
+  knowThem: "",
+  favorites: "",
+  entertain: "",
+  homeType: "",
+  neverBuy: "",
   photo: null,
 };
 

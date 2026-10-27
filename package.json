@@ -15,6 +15,7 @@
     "engine:seed-sql": "npx tsx src/engine/scripts/seed-sql.ts",
     "engine:train": "npx tsx src/engine/scripts/train.ts",
     "engine:reset-training": "npx tsx src/engine/scripts/reset-training.ts",
+    "engine:import-catalog": "npx tsx src/engine/scripts/import-catalog.ts",
     "engine:test-parse": "npx tsx scripts/test-claude-parse.ts"
   },
   "overrides": {
