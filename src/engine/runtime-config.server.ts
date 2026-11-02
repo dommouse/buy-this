@@ -6,7 +6,8 @@ import { getAppSetting } from "@/admin/lib/settings.server";
 import { engineConfig, type AvoidCategory } from "./config";
 
 let lastRefresh = 0;
-const TTL_MS = 30_000;
+/** Short TTL so Gift Brain admin saves apply on the next recommend quickly. */
+const TTL_MS = 5_000;
 
 /** Snapshot of env defaults captured once at module load (before DB overlays). */
 const envBaseline = {
@@ -42,6 +43,8 @@ function asStr(v: unknown, fallback: string): string {
 }
 
 function parseAvoidFromSetting(raw: unknown, fallback: AvoidCategory[]): AvoidCategory[] {
+  // Explicit empty string from admin = clear all avoids (do not restore env defaults).
+  if (typeof raw === "string" && raw.trim() === "") return [];
   if (typeof raw !== "string" || !raw.trim()) return fallback;
   const wanted = new Set(
     raw
@@ -57,10 +60,11 @@ function parseAvoidFromSetting(raw: unknown, fallback: AvoidCategory[]): AvoidCa
 /** Refresh mutable engineConfig fields from DB. Safe to call often. */
 export async function applyDbEngineOverrides(): Promise<void> {
   if (Date.now() - lastRefresh < TTL_MS) return;
-  lastRefresh = Date.now();
 
   try {
     const s = await getAppSetting("gift_brain");
+    // Only start the TTL window after a successful read so a failed fetch retries soon.
+    lastRefresh = Date.now();
     if (!s || !Object.keys(s).length) return;
 
     (engineConfig as { enabled: boolean }).enabled = asBool(s["ENGINE_ENABLED"], envBaseline.enabled);

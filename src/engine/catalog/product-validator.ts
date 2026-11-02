@@ -1,6 +1,6 @@
 import { amazonAsinUrl } from "../affiliates/amazon";
-import { matchesAvoidCategory } from "../config";
-import { genderMismatch } from "../features/fit";
+import { amazonLiveSearchAllowed, matchesAvoidCategory } from "../config";
+import { genderMismatch, softFeminineCoded } from "../features/fit";
 import type { ProfileFeatures } from "../features/profile";
 import type { Product, Recommendation } from "../types";
 import { engineLog, engineWarn } from "../utils/logger";
@@ -227,6 +227,14 @@ export async function validateRecommendations(
       engineWarn("engine: dropping gender-mismatched gift", p.title);
       continue;
     }
+    if (
+      opts.features.gender === "man" &&
+      opts.features.ageGroup === "adult" &&
+      softFeminineCoded(p)
+    ) {
+      engineWarn("engine: dropping soft-feminine gift for man", p.title);
+      continue;
+    }
     if (isAvoidedGiftCategory(p)) {
       const hit = matchesAvoidCategory(
         `${p.title} ${p.description} ${p.category} ${p.tags.join(" ")}`,
@@ -290,13 +298,25 @@ export async function validateRecommendations(
   }
 
   // Resolve search-URL / missing-ASIN gifts via curated JSON + Amazon crawl (capped).
+  // When Amazon live search is disabled (Associates off / catalog mode=local), keep
+  // products that already have an http(s) buy URL instead of dropping them.
+  const canCrawlAmazon = amazonLiveSearchAllowed();
   const toResolve = softOk.filter((s) => s.needsResolve).slice(0, 12);
   if (toResolve.length) {
-    engineLog(`engine: resolving ${toResolve.length} gifts without live /dp (curated JSON + Amazon search)`);
+    engineLog(
+      `engine: resolving ${toResolve.length} gifts without live /dp`,
+      canCrawlAmazon ? "(curated JSON + Amazon search)" : "(curated match only — Amazon crawl off)",
+    );
   }
   await mapPool(toResolve, 4, async (row) => {
     const hit = await resolveToLiveProduct(row.item.product, opts.features.ageGroup);
     if (!hit) {
+      if (!canCrawlAmazon && row.item.product.buyUrl?.startsWith("http")) {
+        // Local / Associates-off: keep the catalog buy link as-is.
+        row.needsResolve = false;
+        row.shopGood = false;
+        return;
+      }
       engineWarn("engine: could not resolve live ASIN for", row.item.product.title);
       return;
     }
@@ -417,7 +437,14 @@ export function catalogEligible(product: Product, features: ProfileFeatures): bo
   if (!product.ageGroups.includes(features.ageGroup)) return false;
   if (ageInappropriate(product, features)) return false;
   if (genderMismatch(product, features.gender, features.ageGroup)) return false;
+  if (features.gender === "man" && features.ageGroup === "adult" && softFeminineCoded(product)) {
+    return false;
+  }
   if (isAvoidedGiftCategory(product)) return false;
+  // Local catalog / Associates-off: allow any http buy link (no Amazon PDP requirement).
+  if (!amazonLiveSearchAllowed()) {
+    return Boolean(product.buyUrl?.startsWith("http"));
+  }
   if (isAmazonSearchUrl(product.buyUrl)) return false;
   const asin = extractAsin(product.buyUrl);
   return !!asin && isAmazonPdpUrl(product.buyUrl);

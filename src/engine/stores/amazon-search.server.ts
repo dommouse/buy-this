@@ -3,7 +3,7 @@ import { isPlaceholderAmazonTitle, resolveAsinTitles } from "../catalog/asin-tit
 import { amazonAsinImageUrl } from "../catalog/product-images";
 import { amazonCatalog } from "../catalog/amazon-catalog";
 import { setAmazonTitleSearch } from "../catalog/resolve-live.server";
-import { engineConfig } from "../config";
+import { amazonLiveSearchAllowed, engineConfig } from "../config";
 import { genderSearchCue, normalizeAudience } from "../features/fit";
 import type { AgeGroup, Product, Slot } from "../types";
 import { engineLog, engineWarn } from "../utils/logger";
@@ -12,6 +12,10 @@ import { storeProductToProduct } from "./types";
 
 /** Let the product validator resolve search-URL / dead-ASIN gifts via Amazon crawl. */
 setAmazonTitleSearch(async (phrase, limit, ageGroup) => {
+  if (!amazonLiveSearchAllowed()) {
+    engineLog("engine: Amazon title search skipped (Associates off or catalog mode=local)");
+    return [];
+  }
   const hits = await searchAmazonHtml(phrase, limit, ageGroup);
   return hits.map((h) => ({ externalId: h.externalId, title: h.title, price: h.price }));
 });
@@ -59,6 +63,10 @@ function priceFromCard(chunk: string): number {
  * Placeholder titles are filled from PDP when possible (product kept either way).
  */
 async function searchAmazonHtml(phrase: string, limit: number, ageGroup: AgeGroup): Promise<StoreProduct[]> {
+  if (!amazonLiveSearchAllowed()) {
+    engineLog("engine: Amazon HTML search skipped (Associates off or catalog mode=local)");
+    return [];
+  }
   const url = new URL("https://www.amazon.com/s");
   url.searchParams.set("k", phrase);
   if (engineConfig.amazon.partnerTag) url.searchParams.set("tag", engineConfig.amazon.partnerTag);
@@ -350,8 +358,9 @@ export async function searchAmazonAllSlots(input: {
 
   await Promise.all(
     input.slots.map(async (slot) => {
+      const genderedPhrase = who ? `${slot.phrase} ${who}`.replace(/\s+/g, " ").trim() : slot.phrase;
       const req: StoreSearchRequest = {
-        phrase: slot.phrase,
+        phrase: genderedPhrase,
         maxPriceUsd: input.maxPriceUsd,
         minPriceUsd: input.minPriceUsd,
         ageGroup: input.ageGroup,
@@ -365,7 +374,7 @@ export async function searchAmazonAllSlots(input: {
       };
 
       const paapi = await searchViaPaapi(req);
-      let hits = paapi?.length ? paapi : await searchAmazonHtml(slot.phrase, perSlot, input.ageGroup);
+      let hits = paapi?.length ? paapi : await searchAmazonHtml(genderedPhrase, perSlot, input.ageGroup);
       if (!paapi?.length) {
         if (hits.length) amazonHtmlHits += hits.length;
         else amazonHtmlBlocked += 1;

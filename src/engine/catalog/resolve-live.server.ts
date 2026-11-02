@@ -1,4 +1,5 @@
 import { amazonAsinUrl } from "../affiliates/amazon";
+import { amazonLiveSearchAllowed } from "../config";
 import type { AgeGroup, Product } from "../types";
 import { engineLog, engineWarn } from "../utils/logger";
 import { amazonCatalog } from "./amazon-catalog";
@@ -90,6 +91,11 @@ export async function resolveToLiveProduct(
         source: "curated",
       };
     }
+  }
+
+  if (!amazonLiveSearchAllowed()) {
+    engineLog("engine: live ASIN resolve skipped Amazon crawl (Associates off or mode=local)");
+    return null;
   }
 
   if (!searchFn) {

@@ -47,9 +47,9 @@ export function resolveAudience(product: Product): GenderAudience {
   if (/\bunisex\b|\ball genders\b|\bgender.?neutral\b|\bfor everyone\b/.test(blob)) return "unisex";
 
   const womenCue =
-    /\b(women'?s|womens|for women|ladies|girl'?s|female|makeup|lipstick|mascara|skincare for her|hairbrush for women|nursing bra|menstrual|pads for women|eyeliner|foundation makeup|blush palette)\b/.test(
+    /\b(women'?s|womens|for women|ladies|girl'?s|female|makeup|lipstick|mascara|skincare for her|hairbrush for women|nursing bra|menstrual|pads for women|eyeliner|foundation makeup|blush palette|silk pillowcase|revlon|hostess|for her)\b/.test(
       blob,
-    );
+    ) || /\bbeauty\b/.test(product.category.toLowerCase());
   const menCue =
     /\b(men'?s|mens|for men|boy'?s|male|beard oil|beard trimmer|men'?s grooming|men'?s razor|athletic cup|jockstrap)\b/.test(
       blob,
@@ -58,6 +58,25 @@ export function resolveAudience(product: Product): GenderAudience {
   if (womenCue && !menCue) return "women";
   if (menCue && !womenCue) return "men";
   return "unknown";
+}
+
+/**
+ * Soft-coded feminine gifts that should not be suggested for adult men unless
+ * they explicitly asked for cooking/beauty. Kitchen cookware/cookbooks and
+ * beauty/romance items often arrive as audience=unisex/unknown.
+ */
+export function softFeminineCoded(product: Product): boolean {
+  const blob = `${product.title} ${product.description} ${product.category} ${product.tags.join(" ")}`.toLowerCase();
+  if (/\b(men'?s|mens|for men|boy'?s|beard|grooming)\b/.test(blob)) return false;
+  return (
+    /\b(makeup|lipstick|mascara|eyeliner|foundation|blush|skincare|serum|nail polish|hairbrush|hair dryer|curling|flat iron|silk pillowcase|jewelry|necklace|bracelet|earring|spa set|bath bomb|hostess|for her|womens?|ladies)\b/.test(
+      blob,
+    ) ||
+    /\b(dutch oven|tea kettle|electric kettle|gooseneck|cookware|saucepan|casserole|bakeware|cookbook|recipe book|cast iron dutch|kitchen knife set)\b/.test(
+      blob,
+    ) ||
+    /\bbeauty\b/.test(product.category.toLowerCase())
+  );
 }
 
 /** Normalize AI / store audience strings into our enum. */
@@ -146,7 +165,12 @@ export function genderMismatch(
 
   if (audience === "kids") return false;
   if (gender === "woman") return adultMen && !adultWomen;
-  if (gender === "man") return adultWomen && !adultMen;
+  if (gender === "man") {
+    if (adultWomen && !adultMen) return true;
+    // Soft feminine / cookware / beauty coded as unisex still mismatches adult men.
+    if (softFeminineCoded(product)) return true;
+    return false;
+  }
   return false;
 }
 
@@ -166,8 +190,9 @@ export function answerFitScore(product: Product, profile: RecipientProfile, feat
   if (bounds.genderLabel === "man") {
     if (features.ageGroup === "child" || features.ageGroup === "teen") {
       if (/\b(boy|boys)\b/.test(blob) || audience === "kids") score += 0.25;
-    } else if (audience === "men") score += 0.35;
-    else if (/\b(men|his |grooming|beard)\b/.test(blob)) score += 0.2;
+    } else if (audience === "men") score += 0.45;
+    else if (/\b(men|his |grooming|beard|multi.?tool|gaming|tech|grill)\b/.test(blob)) score += 0.3;
+    if (softFeminineCoded(product)) score -= 1.2;
   }
   if (audience === "unisex" || audience === "kids") score += 0.05;
 

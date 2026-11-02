@@ -223,3 +223,12 @@ export const engineConfig = {
 
 /** Mutable so `applyDbEngineOverrides()` can patch non-secret knobs at runtime. */
 export type EngineConfig = typeof engineConfig;
+
+/**
+ * True when live Amazon HTML/PAAPI search is allowed by admin Gift Brain settings.
+ * Catalog mode `local` or Associates disabled → no Amazon network search (including
+ * title→ASIN resolve during validation).
+ */
+export function amazonLiveSearchAllowed(): boolean {
+  return Boolean(engineConfig.amazon.enabled) && engineConfig.catalogMode !== "local";
+}

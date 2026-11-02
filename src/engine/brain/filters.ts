@@ -1,3 +1,4 @@
+import { genderMismatch, softFeminineCoded } from "../features/fit";
 import { budgetToTier } from "../features/profile";
 import type { ProfileFeatures } from "../features/profile";
 import { titleHitsBlocklist } from "../keywords/blocklist";
@@ -115,6 +116,10 @@ export function filterCatalogPool(
     // Budget hard wall
     if (p.price < spec.priceMin || p.price > spec.priceMax) return false;
     if (titleHitsBlocklist(p.title, profile, features)) return false;
+    if (genderMismatch(p, features.gender, features.ageGroup)) return false;
+    if (features.gender === "man" && features.ageGroup === "adult" && softFeminineCoded(p)) {
+      return false;
+    }
 
     // Age group hard
     if (p.ageGroups.length) {
@@ -221,6 +226,10 @@ export function hardFilterCandidates(
     .filter((p) => {
       if (p.price < softMin || p.price > spec.priceMax) return false;
       if (titleHitsBlocklist(p.title, profile, features)) return false;
+      if (genderMismatch(p, features.gender, features.ageGroup)) return false;
+      if (features.gender === "man" && features.ageGroup === "adult" && softFeminineCoded(p)) {
+        return false;
+      }
       const asin = extractAsin(p.buyUrl)?.toUpperCase() || p.id.toUpperCase();
       if (usedAsins.has(asin)) return false;
       return true;

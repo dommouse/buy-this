@@ -15,6 +15,7 @@ import {
   saveRecommendations,
   upsertSuggestedProducts,
 } from "./data/engine-repository";
+import { softFeminineCoded } from "./features/fit";
 import { extractProfileFeatures } from "./features/profile";
 import { keywordSearchRecommend } from "./keyword-recommend.server";
 import { assignSlotsToAll } from "./scoring/ranker";
@@ -233,6 +234,19 @@ async function catalogFill(
         s.product.category.toLowerCase() === "baby",
     );
     if (baby.length) pool = baby;
+  }
+  // Prefer gender-aligned catalog rows before emergency fill (esp. adult men).
+  if (features.gender === "man" && features.ageGroup === "adult") {
+    const masculineFirst = [...pool].sort((a, b) => {
+      const rank = (p: typeof a.product) => {
+        if (p.audience === "men") return 3;
+        if (/\b(men|grooming|beard|gaming|tech|grill|multi.?tool)\b/i.test(p.title)) return 2;
+        if (p.audience === "women" || softFeminineCoded(p)) return -2;
+        return 0;
+      };
+      return rank(b.product) - rank(a.product) || b.score - a.score;
+    });
+    pool = masculineFirst;
   }
   let draft = assignSlotsToAll(pool).slice(0, limit * 2);
   let items = await validateRecommendations(draft, {

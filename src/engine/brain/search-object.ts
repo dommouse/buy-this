@@ -101,35 +101,48 @@ function freeTextPhrase(raw: string): Phrase | null {
 function occasionBoost(occasion: string, relationship: string, gender: string): Phrase {
   const o = (occasion || "").toLowerCase();
   const r = (relationship || "").toLowerCase();
-  const woman =
-    /woman|female|girl|mom|mother|wife|girlfriend|partner/i.test(`${gender} ${r}`) ||
-    /mother'?s day|valentine|anniversary/i.test(o);
+  // Gender from questionnaire only — "Partner" must NOT flip to woman defaults.
+  const woman = /\b(woman|women|female|girl)\b/i.test(gender);
+  const man = /\b(man|men|male|boy)\b/i.test(gender) && !woman;
+  const romanceRecipientWoman =
+    woman || /wife|girlfriend|mom|mother/i.test(r) || /mother'?s day/i.test(o);
 
   if (/mother'?s day/.test(o)) {
-    return woman
+    return romanceRecipientWoman
       ? { words: "spa pamper set mom", category: "BEAUTY" }
       : { words: "personalized keepsake mom", category: "HOME" };
   }
   if (/father'?s day/.test(o)) return { words: "dad grilling accessory", category: "HOME" };
-  if (/graduation/.test(o)) return { words: "graduation desk accessory", category: "TECH" };
+  if (/graduation/.test(o)) {
+    return man
+      ? { words: "graduation tech accessory", category: "TECH" }
+      : { words: "graduation desk accessory", category: "TECH" };
+  }
   if (/valentine|anniversary/.test(o)) {
+    if (man) return { words: "personalized leather accessory men", category: "FASHION_MEN" };
     return { words: "romantic personalized jewelry", category: "FASHION_WOMEN" };
   }
   if (/housewarming/.test(o)) return { words: "home entertaining set", category: "HOME" };
   if (/christmas|birthday|other/.test(o)) {
-    return woman
-      ? { words: "personalized keepsake set", category: "HOME" }
-      : { words: "quality everyday accessory", category: "HOME" };
+    if (man) return { words: "practical tech gadget men", category: "TECH" };
+    if (woman) return { words: "personalized keepsake set", category: "HOME" };
+    return { words: "quality everyday accessory", category: "HOME" };
   }
+  if (man) return { words: "practical everyday gadget", category: "TECH" };
   return { words: "personalized keepsake set", category: "HOME" };
 }
 
-function wearAngle(wearUseDo: string, base: Phrase): Phrase {
+function wearAngle(wearUseDo: string, base: Phrase, gender = ""): Phrase {
   const w = (wearUseDo || "").toLowerCase();
+  const man = /\b(man|men|male|boy)\b/i.test(gender);
   if (w.includes("wear")) {
     return {
-      words: base.category.startsWith("FASHION") ? base.words : "fashion accessory stylish",
-      category: "FASHION_WOMEN",
+      words: base.category.startsWith("FASHION")
+        ? base.words
+        : man
+          ? "mens fashion accessory"
+          : "fashion accessory stylish",
+      category: man ? "FASHION_MEN" : "FASHION_WOMEN",
     };
   }
   if (w.includes("experience") || w.includes("do")) {
@@ -169,10 +182,7 @@ function clampKeywords(words: string): string {
   const filler = new Set([
     "under",
     "for",
-    "women",
-    "men",
-    "boys",
-    "girls",
+    // Keep men/women/boys/girls — gender cues must survive into Amazon queries.
     "gift",
     "gifts",
     "ideas",
@@ -317,7 +327,7 @@ function buildAdultObjects(
 
   // The One: free-text first (The One priority), else personality, else interest, else occasion
   let oneBase: Phrase = free || primaryPers || interestPhrase || occasion;
-  oneBase = wearAngle(profile.wearUseDo || "", oneBase);
+  oneBase = wearAngle(profile.wearUseDo || "", oneBase, profile.gender);
 
   // The Wow: second personality / premium angle / occasion twist
   let wowBase: Phrase =
@@ -348,6 +358,12 @@ function buildAdultObjects(
 
   const retailers: ("curated" | "amazon")[] = ["curated", "amazon"];
 
+  const genderCue = /\b(man|men|male|boy)\b/i.test(profile.gender)
+    ? "men"
+    : /\b(woman|women|female|girl)\b/i.test(profile.gender)
+      ? "women"
+      : "";
+
   const mk = (
     slot: Slot,
     base: Phrase,
@@ -355,16 +371,18 @@ function buildAdultObjects(
     sort: SearchObject["sort"],
   ): SearchObject => {
     const category = categoryForGender(base.category, profile.gender);
+    const withGender = (words: string) =>
+      genderCue ? clampKeywords(`${words} ${genderCue}`) : clampKeywords(words);
     return {
       slot,
-      keywords: clampKeywords(base.words),
+      keywords: withGender(base.words),
       category,
       priceMin: min,
       priceMax: max,
       sort,
       retailerPriority: retailers,
       backup: {
-        keywords: clampKeywords(backup.words),
+        keywords: withGender(backup.words),
         category: categoryForGender(backup.category, profile.gender),
       },
     };

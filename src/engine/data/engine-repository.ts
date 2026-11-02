@@ -234,8 +234,15 @@ export async function loadProducts(): Promise<Product[]> {
   if (engineConfig.catalogMode === "amazon") {
     merged = merged.filter((p) => p.provider === "amazon" || p.id.startsWith("gc:"));
   } else if (engineConfig.catalogMode === "local") {
-    merged = giftCatalog.length ? giftCatalog : merged.filter((p) => p.id.startsWith("gc:") || p.provider === "gift_catalog");
-    if (!merged.length) merged = fallbackCatalog();
+    // Strict local: never inject Amazon curated/starter fallback (admin chose local catalog).
+    merged = giftCatalog.length
+      ? giftCatalog
+      : merged.filter((p) => p.id.startsWith("gc:") || p.provider === "gift_catalog");
+    if (!merged.length) {
+      engineWarn(
+        "engine: catalog mode=local but gift_catalog is empty — returning no products (Amazon fallback skipped)",
+      );
+    }
   }
 
   productCache = { at: Date.now(), products: merged };
