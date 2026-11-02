@@ -101,8 +101,12 @@ export async function applyDbEngineOverrides(): Promise<void> {
       s["AMAZON_ASSOCIATES_ENABLED"],
       envBaseline.amazonEnabled,
     );
-    const tag = asStr(s["AMAZON_PARTNER_TAG"], "");
-    if (tag) (engineConfig.amazon as { partnerTag: string }).partnerTag = tag;
+    // Empty admin tag restores env baseline (do not leave a stale prior overlay).
+    const rawTag = s["AMAZON_PARTNER_TAG"];
+    (engineConfig.amazon as { partnerTag: string }).partnerTag =
+      typeof rawTag === "string" && rawTag.trim()
+        ? rawTag.trim()
+        : envBaseline.amazonPartnerTag;
 
     (engineConfig.skimlinks as { enabled: boolean }).enabled = asBool(
       s["SKIMLINKS_ENABLED"],

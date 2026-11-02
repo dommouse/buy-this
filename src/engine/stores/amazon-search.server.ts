@@ -323,6 +323,18 @@ export async function searchAmazonAllSlots(input: {
   vibe?: string;
   perSlotLimit?: number;
 }): Promise<Map<Slot, StoreProduct[]>> {
+  const empty = new Map<Slot, StoreProduct[]>();
+  for (const s of input.slots) empty.set(s.slot, []);
+
+  if (!engineConfig.amazon.enabled) {
+    engineLog("engine: Amazon Associates disabled — skipping Amazon search");
+    return empty;
+  }
+  if (engineConfig.catalogMode === "local") {
+    engineLog("engine: catalog mode=local — skipping Amazon search");
+    return empty;
+  }
+
   const perSlot = Math.min(8, Math.max(3, input.perSlotLimit ?? 5));
   const who = genderSearchCue(input.ageGroup, input.gender ?? "unspecified");
   engineLog("engine: gift brain searching Amazon (no Claude)", who || "unisex");
@@ -359,8 +371,8 @@ export async function searchAmazonAllSlots(input: {
         else amazonHtmlBlocked += 1;
       }
 
-      // Always merge curated when HTML is thin — critical on corp proxies / bot walls.
-      if (hits.length < 3) {
+      // Merge static Amazon curated catalog when HTML is thin (not when local-only).
+      if (hits.length < 3 && engineConfig.catalogMode !== "local") {
         const catalogHits = searchCatalogPhrase(req, perSlot);
         hits = [...hits, ...catalogHits];
       }

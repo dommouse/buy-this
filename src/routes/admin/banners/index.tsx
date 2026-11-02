@@ -3,10 +3,17 @@ import { useEffect, useState } from "react";
 import { toast } from "sonner";
 
 import { BannerImageField } from "@/admin/components/banner-image-field";
-import { deleteBanner, listBannersAdmin, saveBanner } from "@/admin/modules/banners/banners.functions";
+import { isPendingBannerDataUrl } from "@/admin/lib/banner-image";
+import {
+  deleteBanner,
+  listBannersAdmin,
+  saveBanner,
+  uploadBannerImage,
+} from "@/admin/modules/banners/banners.functions";
 import { AdminPageHeader } from "@/admin/components/page-header";
 import { AdminSpinner, ButtonSpinner } from "@/admin/components/loading";
 import { Button } from "@/components/ui/button";
+import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
@@ -20,9 +27,10 @@ export const Route = createFileRoute("/admin/banners/")({
 type Banner = Awaited<ReturnType<typeof listBannersAdmin>>[number];
 
 const emptyForm = {
-  id: "" as string | undefined,
+  id: undefined as string | undefined,
   title: "",
   description: "",
+  /** Display / preview (server path or local data URL). */
   image_url: "",
   link_url: "/questionnaire",
   cta_label: "Find a gift",
@@ -30,11 +38,14 @@ const emptyForm = {
   is_active: true,
 };
 
+type BannerForm = typeof emptyForm;
+
 function BannersAdminPage() {
   const [rows, setRows] = useState<Banner[]>([]);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
-  const [form, setForm] = useState(emptyForm);
+  const [modalOpen, setModalOpen] = useState(false);
+  const [form, setForm] = useState<BannerForm>(emptyForm);
 
   async function refresh() {
     setRows(await listBannersAdmin());
@@ -52,27 +63,68 @@ function BannersAdminPage() {
     })();
   }, []);
 
+  function openNew() {
+    setForm(emptyForm);
+    setModalOpen(true);
+  }
+
+  function openEdit(row: Banner) {
+    setForm({
+      id: row.id,
+      title: row.title,
+      description: row.description,
+      image_url: row.image_url,
+      link_url: row.link_url,
+      cta_label: row.cta_label,
+      sort_order: row.sort_order,
+      is_active: row.is_active,
+    });
+    setModalOpen(true);
+  }
+
+  function closeModal() {
+    if (busy) return;
+    setModalOpen(false);
+    setForm(emptyForm);
+  }
+
   async function onSave(e: React.FormEvent) {
     e.preventDefault();
+    if (!form.title.trim()) {
+      toast.error("Title is required");
+      return;
+    }
     if (!form.image_url.trim()) {
-      toast.error("Please upload a banner image");
+      toast.error("Please add a banner image");
       return;
     }
     setBusy(true);
     try {
+      let imageUrl = form.image_url.trim();
+      if (isPendingBannerDataUrl(imageUrl)) {
+        const uploaded = await uploadBannerImage({
+          data: {
+            dataUrl: imageUrl,
+            filename: `banner-${Date.now()}.jpg`,
+          },
+        });
+        imageUrl = uploaded.url;
+      }
+
       await saveBanner({
         data: {
           ...(form.id ? { id: form.id } : {}),
-          title: form.title,
+          title: form.title.trim(),
           description: form.description,
-          image_url: form.image_url,
-          link_url: form.link_url,
-          cta_label: form.cta_label,
+          image_url: imageUrl,
+          link_url: form.link_url.trim(),
+          cta_label: form.cta_label.trim(),
           sort_order: form.sort_order,
           is_active: form.is_active,
         },
       });
       toast.success(form.id ? "Banner updated" : "Banner created");
+      setModalOpen(false);
       setForm(emptyForm);
       await refresh();
     } catch (err) {
@@ -83,67 +135,16 @@ function BannersAdminPage() {
   }
 
   return (
-    <div className="space-y-8">
+    <div className="space-y-6">
       <AdminPageHeader
         title="Banners"
         description="Homepage hero slider. Active banners auto-rotate on the public home page."
-      />
-
-      <form onSubmit={onSave} className="space-y-4 rounded-lg border bg-card p-4">
-        <h2 className="font-semibold">{form.id ? "Edit banner" : "New banner"}</h2>
-        <div className="grid gap-4 sm:grid-cols-2">
-          <div className="space-y-1 sm:col-span-2">
-            <Label>Title</Label>
-            <Input value={form.title} onChange={(e) => setForm({ ...form, title: e.target.value })} required />
-          </div>
-          <div className="space-y-1 sm:col-span-2">
-            <Label>Description</Label>
-            <Textarea
-              value={form.description}
-              onChange={(e) => setForm({ ...form, description: e.target.value })}
-              rows={3}
-            />
-          </div>
-          <div className="sm:col-span-2">
-            <BannerImageField
-              value={form.image_url}
-              disabled={busy}
-              onChange={(image_url) => setForm({ ...form, image_url })}
-            />
-          </div>
-          <div className="space-y-1">
-            <Label>Link URL</Label>
-            <Input value={form.link_url} onChange={(e) => setForm({ ...form, link_url: e.target.value })} />
-          </div>
-          <div className="space-y-1">
-            <Label>Link Label</Label>
-            <Input value={form.cta_label} onChange={(e) => setForm({ ...form, cta_label: e.target.value })} />
-          </div>
-          <div className="space-y-1">
-            <Label>Sort order</Label>
-            <Input
-              type="number"
-              value={form.sort_order}
-              onChange={(e) => setForm({ ...form, sort_order: Number(e.target.value) || 0 })}
-            />
-          </div>
-          <div className="flex items-center justify-between gap-4">
-            <Label>Active</Label>
-            <Switch checked={form.is_active} onCheckedChange={(v) => setForm({ ...form, is_active: v })} />
-          </div>
-        </div>
-        <div className="flex gap-2">
-          <Button type="submit" disabled={busy || !form.image_url}>
-            {busy ? <ButtonSpinner /> : null}
-            {form.id ? "Update" : "Create"}
+        actions={
+          <Button type="button" onClick={openNew}>
+            New Banner
           </Button>
-          {form.id ? (
-            <Button type="button" variant="outline" onClick={() => setForm(emptyForm)}>
-              Cancel edit
-            </Button>
-          ) : null}
-        </div>
-      </form>
+        }
+      />
 
       {loading ? (
         <AdminSpinner />
@@ -154,6 +155,7 @@ function BannersAdminPage() {
               <tr>
                 <th className="px-3 py-2">Preview</th>
                 <th className="px-3 py-2">Title</th>
+                <th className="px-3 py-2">Link</th>
                 <th className="px-3 py-2">Order</th>
                 <th className="px-3 py-2">Active</th>
                 <th className="px-3 py-2">Actions</th>
@@ -166,26 +168,14 @@ function BannersAdminPage() {
                     <img src={row.image_url} alt="" className="h-12 w-20 rounded object-cover" />
                   </td>
                   <td className="px-3 py-2 font-medium">{row.title || "—"}</td>
+                  <td className="max-w-[220px] truncate px-3 py-2 text-xs text-muted-foreground" title={row.link_url}>
+                    {row.link_url || "—"}
+                  </td>
                   <td className="px-3 py-2">{row.sort_order}</td>
                   <td className="px-3 py-2">{row.is_active ? "Yes" : "No"}</td>
                   <td className="px-3 py-2">
                     <div className="flex gap-2">
-                      <Button
-                        size="sm"
-                        variant="outline"
-                        onClick={() =>
-                          setForm({
-                            id: row.id,
-                            title: row.title,
-                            description: row.description,
-                            image_url: row.image_url,
-                            link_url: row.link_url,
-                            cta_label: row.cta_label,
-                            sort_order: row.sort_order,
-                            is_active: row.is_active,
-                          })
-                        }
-                      >
+                      <Button size="sm" variant="outline" onClick={() => openEdit(row)}>
                         Edit
                       </Button>
                       <Button
@@ -202,8 +192,8 @@ function BannersAdminPage() {
                             await deleteBanner({ data: { id: row.id } });
                             toast.success("Deleted");
                             await refresh();
-                          } catch (e) {
-                            toast.error(e instanceof Error ? e.message : "Delete failed");
+                          } catch (err) {
+                            toast.error(err instanceof Error ? err.message : "Delete failed");
                           }
                         }}
                       >
@@ -215,8 +205,8 @@ function BannersAdminPage() {
               ))}
               {!rows.length ? (
                 <tr>
-                  <td colSpan={5} className="px-3 py-8 text-center text-muted-foreground">
-                    No banners yet.
+                  <td colSpan={6} className="px-3 py-8 text-center text-muted-foreground">
+                    No banners yet. Click New Banner to create one.
                   </td>
                 </tr>
               ) : null}
@@ -224,6 +214,85 @@ function BannersAdminPage() {
           </table>
         </div>
       )}
+
+      <Dialog open={modalOpen} onOpenChange={(open) => (open ? setModalOpen(true) : closeModal())}>
+        <DialogContent className="max-h-[92vh] max-w-2xl overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>{form.id ? "Edit banner" : "New banner"}</DialogTitle>
+          </DialogHeader>
+          <form onSubmit={onSave} className="space-y-4">
+            <div className="space-y-1">
+              <Label>Title</Label>
+              <Input
+                value={form.title}
+                onChange={(e) => setForm({ ...form, title: e.target.value })}
+                required
+                disabled={busy}
+              />
+            </div>
+            <div className="space-y-1">
+              <Label>Description</Label>
+              <Textarea
+                value={form.description}
+                onChange={(e) => setForm({ ...form, description: e.target.value })}
+                rows={3}
+                disabled={busy}
+              />
+            </div>
+            <BannerImageField
+              value={form.image_url}
+              disabled={busy}
+              onChange={(image_url) => setForm({ ...form, image_url })}
+            />
+            <div className="grid gap-4 sm:grid-cols-2">
+              <div className="space-y-1 sm:col-span-2">
+                <Label>Link URL</Label>
+                <Input
+                  value={form.link_url}
+                  onChange={(e) => setForm({ ...form, link_url: e.target.value })}
+                  placeholder="https://… or /questionnaire"
+                  disabled={busy}
+                />
+                <p className="text-xs text-muted-foreground">Long product URLs are supported (up to 4,000 characters).</p>
+              </div>
+              <div className="space-y-1">
+                <Label>Link Label</Label>
+                <Input
+                  value={form.cta_label}
+                  onChange={(e) => setForm({ ...form, cta_label: e.target.value })}
+                  disabled={busy}
+                />
+              </div>
+              <div className="space-y-1">
+                <Label>Sort order</Label>
+                <Input
+                  type="number"
+                  value={form.sort_order}
+                  onChange={(e) => setForm({ ...form, sort_order: Number(e.target.value) || 0 })}
+                  disabled={busy}
+                />
+              </div>
+              <div className="flex items-center justify-between gap-4 sm:col-span-2">
+                <Label>Active</Label>
+                <Switch
+                  checked={form.is_active}
+                  onCheckedChange={(v) => setForm({ ...form, is_active: v })}
+                  disabled={busy}
+                />
+              </div>
+            </div>
+            <DialogFooter className="gap-2 sm:gap-0">
+              <Button type="button" variant="outline" onClick={closeModal} disabled={busy}>
+                Cancel
+              </Button>
+              <Button type="submit" disabled={busy || !form.image_url || !form.title.trim()}>
+                {busy ? <ButtonSpinner /> : null}
+                {form.id ? "Update banner" : "Create banner"}
+              </Button>
+            </DialogFooter>
+          </form>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

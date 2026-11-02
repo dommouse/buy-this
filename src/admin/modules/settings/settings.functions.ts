@@ -3,6 +3,7 @@ import { z } from "zod";
 
 import { audit, requireAdmin } from "@/admin/auth/session.server";
 import { getAppSetting, setAppSetting, type SettingsMap } from "@/admin/lib/settings.server";
+import { invalidateProductCache } from "@/engine/data/engine-repository";
 import { invalidateEngineConfigCache } from "@/engine/runtime-config.server";
 
 const GIFT_BRAIN_DEFAULTS: SettingsMap = {
@@ -38,6 +39,7 @@ export const saveGiftBrainSettings = createServerFn({ method: "POST" })
     const next = { ...current, ...data };
     await setAppSetting("gift_brain", next);
     invalidateEngineConfigCache();
+    invalidateProductCache();
     await audit(actor.id, "update", "app_settings", "gift_brain");
     return next;
   });

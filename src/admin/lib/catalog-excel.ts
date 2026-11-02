@@ -301,7 +301,7 @@ function mapRow(row: Record<string, unknown>, hyperlinkHint: string): CatalogImp
       "verification_note",
     ]).slice(0, 2000),
     status: status.slice(0, 40),
-    buy_url: buy_url.slice(0, 1000),
+    buy_url: buy_url.slice(0, 4000),
     asin,
     external_ref: external_ref.slice(0, 200),
     is_dead: /dead/i.test(status),

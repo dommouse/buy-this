@@ -7,11 +7,14 @@ import { z } from "zod";
 import { audit, requireAdmin } from "@/admin/auth/session.server";
 import { getEngineDb } from "@/engine/data/server-db";
 
+/** Amazon / affiliate product URLs are often very long. */
+const LONG_URL_MAX = 4000;
+
 const bannerFields = z.object({
   title: z.string().max(200),
   description: z.string().max(2000),
-  image_url: z.string().min(1).max(2000),
-  link_url: z.string().max(500).default(""),
+  image_url: z.string().min(1).max(LONG_URL_MAX),
+  link_url: z.string().max(LONG_URL_MAX).default(""),
   cta_label: z.string().max(80).default(""),
   sort_order: z.number().int().default(0),
   is_active: z.boolean().default(true),

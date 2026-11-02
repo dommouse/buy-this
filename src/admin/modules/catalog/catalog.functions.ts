@@ -12,10 +12,13 @@ import {
 import { getEngineDb } from "@/engine/data/server-db";
 import { invalidateProductCache } from "@/engine/data/engine-repository";
 
+/** Amazon product URLs with tracking params routinely exceed 1k chars. */
+const LONG_URL_MAX = 4000;
+
 const buyUrlSchema = z
   .string()
   .min(1, "Buy URL is required")
-  .max(1000)
+  .max(LONG_URL_MAX)
   .refine((v) => {
     try {
       const u = new URL(v.trim());
@@ -207,26 +210,50 @@ export const upsertGiftCatalogItem = createServerFn({ method: "POST" })
   .validator((data) => catalogSchema.parse(data))
   .handler(async ({ data }) => {
     const actor = await requireAdmin();
+    const db = getEngineDb();
+    const sku = data.sku.trim();
+
+    const { data: skuOwner, error: skuError } = await db
+      .from("gift_catalog")
+      .select("id")
+      .eq("sku", sku)
+      .maybeSingle();
+    if (skuError) throw new Error(skuError.message);
+    if (skuOwner && skuOwner.id !== data.id) {
+      throw new Error(`SKU "${sku}" is already used by another product`);
+    }
+
     const payload = {
       ...data,
+      sku,
       updated_at: new Date().toISOString(),
       last_synced_at: new Date().toISOString(),
     };
     delete (payload as { id?: string }).id;
     if (data.id) {
-      const { data: row, error } = await getEngineDb()
+      const { data: row, error } = await db
         .from("gift_catalog")
         .update(payload)
         .eq("id", data.id)
         .select("*")
         .single();
-      if (error) throw new Error(error.message);
+      if (error) {
+        if (/duplicate|unique/i.test(error.message)) {
+          throw new Error(`SKU "${sku}" is already used by another product`);
+        }
+        throw new Error(error.message);
+      }
       await audit(actor.id, "update", "gift_catalog", data.id);
       invalidateProductCache();
       return row;
     }
-    const { data: row, error } = await getEngineDb().from("gift_catalog").insert(payload).select("*").single();
-    if (error) throw new Error(error.message);
+    const { data: row, error } = await db.from("gift_catalog").insert(payload).select("*").single();
+    if (error) {
+      if (/duplicate|unique/i.test(error.message)) {
+        throw new Error(`SKU "${sku}" is already used by another product`);
+      }
+      throw new Error(error.message);
+    }
     await audit(actor.id, "create", "gift_catalog", row.id);
     invalidateProductCache();
     return row;
@@ -287,7 +314,20 @@ export const importGiftCatalogRows = createServerFn({ method: "POST" })
     const now = new Date().toISOString();
     const errors: string[] = [];
 
-    const skus = data.rows.map((r) => r.sku);
+    // Deduplicate SKUs within this import batch (keep first occurrence)
+    const seenInBatch = new Set<string>();
+    const uniqueRows: typeof data.rows = [];
+    for (const row of data.rows) {
+      const sku = row.sku.trim();
+      if (seenInBatch.has(sku)) {
+        errors.push(`${sku}: duplicate SKU in import file (skipped)`);
+        continue;
+      }
+      seenInBatch.add(sku);
+      uniqueRows.push({ ...row, sku });
+    }
+
+    const skus = uniqueRows.map((r) => r.sku);
     const { data: existingRows, error: lookupError } = await db
       .from("gift_catalog")
       .select("sku")
@@ -295,50 +335,61 @@ export const importGiftCatalogRows = createServerFn({ method: "POST" })
     if (lookupError) throw new Error(lookupError.message);
     const existing = new Set((existingRows ?? []).map((r) => r.sku as string));
 
-    const payloads = data.rows.map((row) => ({
+    // Skip SKUs already in the catalog — never overwrite on auto-import
+    const toInsert = uniqueRows.filter((row) => {
+      if (existing.has(row.sku)) {
+        errors.push(`${row.sku}: SKU already exists (skipped)`);
+        return false;
+      }
+      return true;
+    });
+
+    const payloads = toInsert.map((row) => ({
       ...row,
       updated_at: now,
       last_synced_at: now,
     }));
 
-    // Batch upsert by unique sku — much faster than per-row select/insert
-    const { error: upsertError } = await db.from("gift_catalog").upsert(payloads, {
-      onConflict: "sku",
-      ignoreDuplicates: false,
-    });
-
     let created = 0;
-    let updated = 0;
+    const skippedExisting = uniqueRows.length - toInsert.length;
 
-    if (upsertError) {
-      // Fall back to smaller sub-batches if a full chunk fails validation/size
-      const subSize = 25;
-      for (let i = 0; i < payloads.length; i += subSize) {
-        const slice = payloads.slice(i, i + subSize);
-        const { error } = await db.from("gift_catalog").upsert(slice, { onConflict: "sku" });
-        if (error) {
-          for (const row of slice) {
-            errors.push(`${row.sku}: ${error.message}`);
+    if (payloads.length) {
+      const { error: insertError } = await db.from("gift_catalog").insert(payloads);
+      if (insertError) {
+        // Fall back to smaller batches
+        const subSize = 25;
+        for (let i = 0; i < payloads.length; i += subSize) {
+          const slice = payloads.slice(i, i + subSize);
+          const { error } = await db.from("gift_catalog").insert(slice);
+          if (error) {
+            for (const row of slice) {
+              if (/duplicate|unique/i.test(error.message)) {
+                errors.push(`${row.sku}: SKU already exists (skipped)`);
+              } else {
+                errors.push(`${row.sku}: ${error.message}`);
+              }
+            }
+            continue;
           }
-          continue;
+          created += slice.length;
         }
-        for (const row of slice) {
-          if (existing.has(row.sku)) updated += 1;
-          else created += 1;
-        }
+      } else {
+        created = payloads.length;
       }
-    } else {
-      updated = data.rows.filter((r) => existing.has(r.sku)).length;
-      created = data.rows.length - updated;
     }
 
     await audit(actor.id, "import", "gift_catalog", null, {
       created,
-      updated,
+      skipped: skippedExisting + (errors.length - skippedExisting),
       errors: errors.length,
     });
     if (data.finalize) invalidateProductCache();
-    return { created, updated, skipped: errors.length, errors: errors.slice(0, 50) };
+    return {
+      created,
+      updated: 0,
+      skipped: Math.max(0, data.rows.length - created),
+      errors: errors.slice(0, 50),
+    };
   });
 
 export const exportGiftCatalog = createServerFn({ method: "GET" }).handler(async () => {

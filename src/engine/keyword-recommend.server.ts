@@ -113,17 +113,28 @@ export async function keywordSearchRecommend(input: {
 
   setCuratedExtraProducts(catalogProducts);
 
-  // Curated / local pool filtered by Dominique column order.
-  const curatedPool = filterWithFallback(catalogProducts, spec, profile, features, 15);
-  engineLog(`engine: curated pool after filters: ${curatedPool.length}`);
+  const allowAmazon =
+    engineConfig.amazon.enabled && engineConfig.catalogMode !== "local";
+  const allowLocalCatalog = engineConfig.catalogMode !== "amazon";
 
-  const memory = recallTrendingMatches({
-    profile,
-    features,
-    products: catalogProducts,
-    statsByProduct: statsByProduct ?? new Map(),
-    limit: 6,
-  });
+  // Curated / local pool filtered by Dominique column order.
+  const curatedPool = allowLocalCatalog
+    ? filterWithFallback(catalogProducts, spec, profile, features, 15)
+    : [];
+  engineLog(
+    `engine: curated pool after filters: ${curatedPool.length}`,
+    `mode=${engineConfig.catalogMode} amazon=${engineConfig.amazon.enabled ? "on" : "off"}`,
+  );
+
+  const memory = allowLocalCatalog
+    ? recallTrendingMatches({
+        profile,
+        features,
+        products: catalogProducts,
+        statsByProduct: statsByProduct ?? new Map(),
+        limit: 6,
+      })
+    : [];
 
   const wallMin = spec.priceMin;
   const wallMax = spec.priceMax;
@@ -132,7 +143,7 @@ export async function keywordSearchRecommend(input: {
   const candidates: Product[] = [...curatedPool, ...memory];
   const usedAsins = new Set<string>();
 
-  if (engineConfig.catalogMode !== "local") {
+  if (allowAmazon) {
     try {
       const rawBySlot = await searchAmazonAllSlots({
         slots: searchObjects.map((s) => ({
@@ -155,20 +166,22 @@ export async function keywordSearchRecommend(input: {
         for (const hit of rawBySlot.get(so.slot) ?? []) {
           candidates.push(storeProductToProduct(hit));
         }
-        // Backup keywords if thin
-        const curatedHits = searchCuratedProducts({
-          phrase: so.backup.keywords,
-          maxPriceUsd: wallMax,
-          minPriceUsd: wallMin,
-          ageGroup: features.ageGroup,
-          limit: 4,
-        }).map(storeProductToProduct);
-        candidates.push(...curatedHits);
+        // Backup keywords if thin (local/gift catalog phrase search)
+        if (allowLocalCatalog) {
+          const curatedHits = searchCuratedProducts({
+            phrase: so.backup.keywords,
+            maxPriceUsd: wallMax,
+            minPriceUsd: wallMin,
+            ageGroup: features.ageGroup,
+            limit: 4,
+          }).map(storeProductToProduct);
+          candidates.push(...curatedHits);
+        }
       }
     } catch (err) {
       engineWarn("engine: Amazon search failed — curated only", err);
     }
-  } else {
+  } else if (allowLocalCatalog) {
     for (const so of searchObjects) {
       candidates.push(
         ...searchCuratedProducts({
