@@ -132,7 +132,8 @@ async function recommendInner(
     });
     if (keyed?.items.length) {
       let items = keyed.items;
-      if (items.length < 4) {
+      // Local catalog: never pad with unrelated products — quality over quantity.
+      if (items.length < 4 && engineConfig.catalogMode !== "local") {
         items = await ensureNonEmpty(items, catalogScored, features, 4, ctx.sessionId, profile);
       }
       await upsertSuggestedProducts(items);
@@ -148,8 +149,19 @@ async function recommendInner(
         breakdowns: breakdownMap(items, catalogScored),
       });
     }
+
+    // Local-only: honest empty result — do not invent irrelevant fillers.
+    if (engineConfig.catalogMode === "local") {
+      engineWarn("engine: local catalog — no gifts matched answers; returning empty (no filler)");
+      return emptyNoMatchResult(modelVersion, "gift-brain", profile);
+    }
+
     engineWarn("engine: gift brain returned no gifts — filling from catalog");
   } catch (err) {
+    if (engineConfig.catalogMode === "local") {
+      engineError("engine: gift brain failed in local mode — returning empty (no filler)", err);
+      return emptyNoMatchResult(modelVersion, "gift-brain", profile);
+    }
     engineError("engine: gift brain failed — filling from catalog", err);
   }
 
@@ -165,6 +177,10 @@ async function ensureNonEmpty(
   profile?: RecipientProfile,
 ): Promise<Recommendation[]> {
   if (items.length >= Math.min(4, limit)) return items.slice(0, limit);
+  if (engineConfig.catalogMode === "local") {
+    engineLog(`engine: local mode — keeping ${items.length} matched gifts (no emergency filler)`);
+    return items.slice(0, limit);
+  }
   engineWarn(`engine: only ${items.length} gifts — filling from emergency catalog`);
   let scoredPool = catalogScored;
   if (profile && /baby shower/i.test(profile.occasion)) {
@@ -270,14 +286,25 @@ async function catalogFill(
       },
     }));
 
-  items = await ensureNonEmpty(items, pool, features, limit, ctx.sessionId, profile);
+  if (engineConfig.catalogMode === "local") {
+    // Only keep gifts that already matched; never pad with random catalog leftovers.
+    if (!items.length) {
+      engineWarn("engine: local catalog fill — zero matches; returning empty");
+      return emptyNoMatchResult(modelVersion, "scoring", profile);
+    }
+    engineLog(`engine: local catalog fill — ${items.length} matched gifts (no emergency pad)`);
+  } else {
+    items = await ensureNonEmpty(items, pool, features, limit, ctx.sessionId, profile);
+  }
   items = enrichProductImages(items);
   const breakdowns = new Map(scored.map((s) => [s.product.id, s.breakdown]));
   return finalize(items, {
     recommendationId: crypto.randomUUID(),
     modelVersion,
     strategy: "scoring",
-    tip: "Dominique matched catalog gifts to their answers and budget.",
+    tip: items.length
+      ? "Dominique matched catalog gifts to their answers and budget."
+      : noMatchTip(profile),
     segment: features.segment,
     searchId: ctx.searchId,
     sessionId: ctx.sessionId,
@@ -355,6 +382,35 @@ function emptyResult(modelVersion: string, strategy: RecommendationResult["strat
     modelVersion,
     strategy,
     tip: null,
+    items: [],
+    total: 0,
+    pageSize: engineConfig.pageSize,
+    engineLogs: takeEngineLogs().slice(),
+  };
+}
+
+function noMatchTip(profile: RecipientProfile): string {
+  const bits = [
+    profile.occasion,
+    profile.gender,
+    profile.ageRange,
+    profile.budget,
+  ].filter(Boolean);
+  const criteria = bits.length ? bits.join(" · ") : "your answers";
+  return `No gifts in our catalog match ${criteria} right now. Try a wider budget, different occasion details, or ask us to expand the catalog — we’d rather show nothing than the wrong gift.`;
+}
+
+function emptyNoMatchResult(
+  modelVersion: string,
+  strategy: RecommendationResult["strategy"],
+  profile: RecipientProfile,
+): RecommendationResult {
+  engineLog("engine: empty result — no relevant local catalog matches");
+  return {
+    recommendationId: null,
+    modelVersion,
+    strategy,
+    tip: noMatchTip(profile),
     items: [],
     total: 0,
     pageSize: engineConfig.pageSize,

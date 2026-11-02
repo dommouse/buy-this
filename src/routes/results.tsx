@@ -261,9 +261,17 @@ function ResultsPage() {
         setError("Dominique couldn't lock a shortlist yet. Try again — she's still learning.");
         bootstrappedRef.current = false;
       } else if (!data.items?.length) {
-        setError("Dominique couldn't lock a shortlist yet. Try again — she's still learning.");
+        // Honest empty: local catalog had no relevant matches (not a hard failure).
         setResult(data);
-        bootstrappedRef.current = false;
+        setPage(0);
+        setError(null);
+        setLiveStatus("No matching gifts for these answers yet.");
+        console.log(
+          `%c[BUY THIS engine]%c done — 0 gifts · strategy=${data.strategy}`,
+          "color:#c45c26;font-weight:bold",
+          "color:inherit",
+          data.tip || "no matches",
+        );
       } else {
         setResult(data);
         setPage(0);
@@ -395,18 +403,31 @@ function ResultsPage() {
         )}
 
         {answers && !loading && !error && items.length === 0 && (
-          <div className="rounded-2xl border border-border bg-card p-8 text-center">
-            <p className="text-muted-foreground">No gifts landed yet — Dominique can take another pass.</p>
-            <Button
-              type="button"
-              className="mt-5 min-h-12 rounded-full font-bold"
-              onClick={() => {
-                bootstrappedRef.current = true;
-                void loadRecommendations({ force: true });
-              }}
-            >
-              Keep searching
-            </Button>
+          <div className="mx-auto max-w-lg rounded-2xl border border-border bg-card p-8 text-center shadow-sm">
+            <Gift className="mx-auto h-10 w-10 text-primary/70" aria-hidden />
+            <h2 className="mt-4 text-xl font-semibold tracking-tight">No matching gifts yet</h2>
+            <p className="mt-3 text-sm leading-6 text-muted-foreground sm:text-base">
+              {result?.tip ||
+                "Nothing in our catalog fits these answers right now. We’d rather show you nothing than the wrong gift."}
+            </p>
+            <p className="mt-2 text-xs text-muted-foreground">
+              Try a wider budget, tweak the occasion details, or come back after we add more products.
+            </p>
+            <div className="mt-6 flex flex-wrap items-center justify-center gap-3">
+              <Button asChild variant="outline" className="min-h-11 rounded-full">
+                <Link to="/questionnaire">Adjust answers</Link>
+              </Button>
+              <Button
+                type="button"
+                className="min-h-11 rounded-full font-bold"
+                onClick={() => {
+                  bootstrappedRef.current = true;
+                  void loadRecommendations({ force: true });
+                }}
+              >
+                Search again
+              </Button>
+            </div>
           </div>
         )}
 
