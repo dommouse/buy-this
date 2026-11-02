@@ -21,7 +21,7 @@ import {
 } from "lucide-react";
 
 import logoUrl from "@/assets/relationship-concierge-logo.png";
-import { AppMenu } from "@/components/app-menu";
+import { PortalShell } from "@/components/portal/portal-shell";
 import { Button } from "@/components/ui/button";
 import { createEmailCapture } from "@/db/repositories/email-captures";
 import { createGiftSearch } from "@/db/repositories/gift-searches";
@@ -303,9 +303,8 @@ function ResultsPage() {
   const pageItems = items.slice(safePage * pageSize, safePage * pageSize + pageSize);
 
   return (
-    <main className="min-h-dvh bg-background px-4 pb-10 pt-20 text-foreground sm:px-6 sm:pt-24">
-      <AppMenu />
-      <div className="mx-auto w-full max-w-5xl">
+    <PortalShell title="Your gifts">
+      <div className="mx-auto w-full max-w-5xl pb-6">
         <header className="mb-8 text-center sm:mb-10">
           <img src={logoUrl} alt="BUY THIS - Relationship Concierge" className="mx-auto w-28 sm:w-36" />
           <h1 className="mt-4 flex items-center justify-center gap-2 text-3xl font-bold leading-tight sm:text-4xl">
@@ -529,7 +528,7 @@ function ResultsPage() {
       </div>
 
       {emailOpen && <EmailModal sent={sent} searchId={searchId} onSent={() => setSent(true)} onClose={() => setEmailOpen(false)} />}
-    </main>
+    </PortalShell>
   );
 }
 
@@ -663,6 +662,12 @@ function EmailModal({
     if (typeof email === "string" && email) {
       try {
         await createEmailCapture({ email, search_id: searchId, source: "results_page" });
+        try {
+          const { subscribeNewsletter } = await import("@/admin/modules/newsletter/newsletter.functions");
+          await subscribeNewsletter({ data: { email, source: "results_page" } });
+        } catch {
+          /* newsletter optional */
+        }
       } catch (err) {
         console.error("BUY THIS: failed to save email", err);
       }

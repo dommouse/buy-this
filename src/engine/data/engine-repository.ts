@@ -77,40 +77,167 @@ function untyped() {
 
 let productCache: { at: number; products: Product[] } | null = null;
 
+/** Clear in-memory catalog cache (admin import / sync). */
+export function invalidateProductCache() {
+  productCache = null;
+}
+
+function genderToAudience(g: string): Product["audience"] {
+  const v = (g || "").trim().toUpperCase();
+  if (v === "W" || v === "WOMEN" || v === "F" || v === "FEMALE") return "women";
+  if (v === "M" || v === "MEN" || v === "MALE") return "men";
+  if (v === "K" || v === "KIDS" || v === "CHILD") return "kids";
+  if (v === "U" || v === "UNISEX" || v === "") return "unisex";
+  return normalizeAudience(g);
+}
+
+function agesToGroups(start: number | null, end: number | null): Product["ageGroups"] {
+  const a = start ?? 0;
+  const b = end ?? 99;
+  const groups: Product["ageGroups"] = [];
+  if (a <= 12 && b >= 0) groups.push("child");
+  if (a <= 17 && b >= 13) groups.push("teen");
+  if (b >= 18) groups.push("adult");
+  return groups.length ? groups : ["adult"];
+}
+
+function giftCatalogToProduct(r: {
+  id: string;
+  sku: string;
+  title: string;
+  description: string;
+  category: string;
+  price: number | null;
+  price_tier: string | null;
+  tags: string[] | null;
+  gender: string;
+  age_start: number | null;
+  age_end: number | null;
+  occasion: string;
+  relationship: string;
+  buy_url: string;
+  asin: string | null;
+  slot: string;
+  gift_note: string;
+  retailer: string;
+}): Product {
+  const asin = r.asin || extractAsin(r.buy_url);
+  const buyUrl = asin
+    ? amazonAsinUrl(asin)
+    : r.buy_url
+      ? withAmazonTag(r.buy_url)
+      : "";
+  const occasions = r.occasion
+    ? r.occasion.split(/[,|;]+/).map((s) => s.trim()).filter(Boolean)
+    : [];
+  const relationships = r.relationship
+    ? r.relationship.split(/[,|;]+/).map((s) => s.trim()).filter(Boolean)
+    : [];
+  return {
+    id: `gc:${r.sku || r.id}`,
+    title: r.title,
+    description: r.description || r.gift_note || "",
+    category: r.category || "Other",
+    price: Number(r.price) || 0,
+    currency: "USD",
+    tags: [...(r.tags ?? []), ...(r.slot ? [r.slot] : [])],
+    ageGroups: agesToGroups(r.age_start, r.age_end),
+    giftType: "physical",
+    audience: genderToAudience(r.gender),
+    imageUrl: null,
+    buyUrl,
+    provider: (r.retailer || "catalog").toLowerCase().includes("amazon") ? "amazon" : "gift_catalog",
+    popularity: 0.5,
+    occasions,
+    priceTier: (r.price_tier as Product["priceTier"]) || "",
+    relationships,
+    parentTypes: [],
+    wearUseDo: "",
+  };
+}
+
+async function loadGiftCatalogProducts(): Promise<Product[]> {
+  const today = new Date().toISOString().slice(0, 10);
+  const { data, error } = await untyped()
+    .from("gift_catalog")
+    .select("*")
+    .eq("is_dead", false)
+    .neq("status", "dead")
+    .limit(5000);
+  if (error) {
+    engineWarn("engine: gift_catalog unavailable", error.message);
+    return [];
+  }
+  const rows = (data ?? []) as Array<Parameters<typeof giftCatalogToProduct>[0] & {
+    available_from: string | null;
+    available_to: string | null;
+    status: string;
+  }>;
+  return rows
+    .filter((r) => {
+      if (r.available_from && r.available_from > today) return false;
+      if (r.available_to && r.available_to < today) return false;
+      return true;
+    })
+    .map(giftCatalogToProduct)
+    .filter((p) => p.title && (p.buyUrl || p.provider === "gift_catalog"));
+}
+
 /** Catalog + DB products for scoring / Gift Brain memory. */
 export async function loadProducts(): Promise<Product[]> {
   if (productCache && Date.now() - productCache.at < 60_000) return productCache.products;
+
+  const giftCatalog = await loadGiftCatalogProducts();
+  const preferLocal = engineConfig.catalogMode === "local";
+  const skipAmazon = engineConfig.catalogMode === "local";
+
   const { data, error } = await untyped().from("products").select("*").eq("active", true).limit(2000);
+  let products: Product[] = [];
   if (error || !data?.length) {
     if (error) engineWarn("engine: products table unavailable, using Amazon/starter fallback", error.message);
-    const fallback = fallbackCatalog();
-    productCache = { at: Date.now(), products: fallback };
-    return fallback;
+    products = preferLocal && giftCatalog.length ? [] : fallbackCatalog();
+  } else {
+    products = (data as ProductRow[]).map(rowToProduct).map((p) => ({
+      ...p,
+      buyUrl: withAmazonTag(p.buyUrl),
+    }));
   }
-  const products = (data as ProductRow[]).map(rowToProduct).map((p) => ({
-    ...p,
-    buyUrl: withAmazonTag(p.buyUrl),
-  }));
-  // Merge curated Amazon gifts so scoring can prefer shoppable Associates links.
-  // Prefer live /dp ASIN versions when DB/starter rows only have search URLs.
+
+  // Prefer Excel gift_catalog over starter/search-URL junk; merge Amazon when allowed.
   const byId = new Map(products.map((p) => [p.id, p]));
-  const byTitle = new Map(
-    products.map((p) => [p.title.trim().toLowerCase(), p] as const),
-  );
-  if (engineConfig.amazon.enabled) {
+  const byTitle = new Map(products.map((p) => [p.title.trim().toLowerCase(), p] as const));
+
+  for (const p of giftCatalog) {
+    byId.set(p.id, p);
+    byTitle.set(p.title.trim().toLowerCase(), p);
+  }
+
+  if (!skipAmazon && engineConfig.amazon.enabled) {
     for (const p of tagAmazonProducts(amazonCatalog)) {
-      byId.set(p.id, p);
       const key = p.title.trim().toLowerCase();
       const existing = byTitle.get(key);
+      // Don't replace a live gift_catalog row with amazon search junk
+      if (existing?.provider === "gift_catalog" || existing?.id.startsWith("gc:")) {
+        continue;
+      }
+      byId.set(p.id, p);
       if (!existing || isAmazonSearchUrl(existing.buyUrl) || !extractAsin(existing.buyUrl)) {
         byTitle.set(key, p);
-        // Replace search-URL twin under its old id so filters still see one live gift
         if (existing && existing.id !== p.id) byId.delete(existing.id);
         byId.set(p.id, p);
       }
     }
   }
-  const merged = [...byId.values()];
+
+  // If catalog mode is amazon-only, drop non-amazon providers except gift_catalog when both
+  let merged = [...byId.values()];
+  if (engineConfig.catalogMode === "amazon") {
+    merged = merged.filter((p) => p.provider === "amazon" || p.id.startsWith("gc:"));
+  } else if (engineConfig.catalogMode === "local") {
+    merged = giftCatalog.length ? giftCatalog : merged.filter((p) => p.id.startsWith("gc:") || p.provider === "gift_catalog");
+    if (!merged.length) merged = fallbackCatalog();
+  }
+
   productCache = { at: Date.now(), products: merged };
   return merged;
 }

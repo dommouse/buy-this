@@ -95,6 +95,9 @@ async function recommendInner(
   profile: RecipientProfile,
   ctx: { searchId: string | null; sessionId: string | null },
 ): Promise<RecommendationResult> {
+  const { applyDbEngineOverrides } = await import("./runtime-config.server");
+  await applyDbEngineOverrides();
+
   if (!engineConfig.enabled) {
     engineWarn("engine: disabled — returning empty result");
     return emptyResult("disabled", "scoring");

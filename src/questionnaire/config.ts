@@ -20,10 +20,20 @@ export const OCCASIONS: QuestionOption[] = [
 export const RELATIONSHIPS: QuestionOption[] = [
   { value: "Partner", emoji: "💕", catalog: "Column H Relationship" },
   { value: "Parent", emoji: "👨‍👧", catalog: "Column H Relationship" },
+  { value: "Grandparent", emoji: "💛", catalog: "Column H Relationship" },
   { value: "Child", emoji: "🧒", catalog: "Column H Relationship" },
   { value: "Friend", emoji: "🤝", catalog: "Column H Relationship" },
   { value: "Coworker or Boss", emoji: "💼", catalog: "Column H Relationship" },
   { value: "Other family member", emoji: "🎁", catalog: "Column H Relationship" },
+];
+
+/** Birthday / Christmas / Mother's / Father's Day — include Grandparent. */
+export const RELATIONSHIPS_WITH_GRANDPARENT: QuestionOption[] = RELATIONSHIPS;
+
+/** Mother's / Father's Day — Parent or Grandparent. */
+export const PARENT_DAY_RELATIONSHIPS: QuestionOption[] = [
+  { value: "Parent", emoji: "👨‍👧", catalog: "Column H Relationship" },
+  { value: "Grandparent", emoji: "💛", catalog: "Column H Relationship" },
 ];
 
 export const BABY_SHOWER_RELATIONSHIPS: QuestionOption[] = [
@@ -41,13 +51,39 @@ export const AGES_ALL: QuestionOption[] = [
   { value: "40+", emoji: "🏆", catalog: "age batch" },
 ];
 
-export const AGES_CHILD: QuestionOption[] = AGES_ALL.filter((o) =>
-  ["1-3", "4-9", "10-15", "16-19"].includes(o.value),
+/** Child of any age — includes adult kids (20+). */
+export const AGES_CHILD: QuestionOption[] = [
+  { value: "1-3", emoji: "👶", catalog: "age batch" },
+  { value: "4-9", emoji: "🧸", catalog: "age batch" },
+  { value: "10-15", emoji: "🎧", catalog: "age batch" },
+  { value: "16-19", emoji: "📱", catalog: "age batch" },
+  { value: "20-39", emoji: "✨", hint: "Adult child", catalog: "age batch adult kid" },
+  { value: "40+", emoji: "🏆", hint: "Adult child", catalog: "age batch adult kid" },
+];
+
+/** Partner — no ages under 16. */
+export const AGES_PARTNER: QuestionOption[] = AGES_ALL.filter((o) =>
+  ["16-19", "20-39", "40+"].includes(o.value),
 );
+
 export const AGES_ADULT: QuestionOption[] = AGES_ALL.filter((o) =>
   ["20-39", "40+"].includes(o.value),
 );
 export const AGES_COWORKER: QuestionOption[] = AGES_ADULT;
+
+/** Gender for people gifts (labels adapt by age in routing). */
+export const GENDERS_ADULT: QuestionOption[] = [
+  { value: "Woman", emoji: "👩", catalog: "audience" },
+  { value: "Man", emoji: "👨", catalog: "audience" },
+  { value: "Non-binary", emoji: "✨", catalog: "audience" },
+  { value: "Prefer not to say", emoji: "🤷", catalog: "audience" },
+];
+
+export const GENDERS_CHILD: QuestionOption[] = [
+  { value: "Girl", emoji: "👧", catalog: "audience" },
+  { value: "Boy", emoji: "👦", catalog: "audience" },
+  { value: "Prefer not to say", emoji: "🤷", catalog: "audience" },
+];
 
 export const GRADUATION_LEVELS: QuestionOption[] = [
   { value: "High school", emoji: "🎒", catalog: "Graduation HS" },
@@ -66,7 +102,22 @@ export const BUDGETS_COWORKER: QuestionOption[] = BUDGETS.filter((o) =>
 );
 
 /** Relationships that may see $150+ (Rule 17). */
-export const BUDGET_FAMILY_OK = new Set(["Child", "Parent", "Other family member", "Partner", "Family"]);
+export const BUDGET_FAMILY_OK = new Set([
+  "Child",
+  "Parent",
+  "Grandparent",
+  "Other family member",
+  "Partner",
+  "Family",
+]);
+
+/** Occasions that offer Grandparent as a relationship. */
+export const GRANDPARENT_OCCASIONS = new Set([
+  "Birthday",
+  "Christmas",
+  "Mother's Day",
+  "Father's Day",
+]);
 
 export const FIRST_BABY: QuestionOption[] = [
   { value: "First baby", emoji: "⭐" },
@@ -104,6 +155,8 @@ export const CHILD_LOVES: QuestionOption[] = [
   { value: "Books", emoji: "📚", catalog: "Column C" },
   { value: "Sensory play", emoji: "🤝", catalog: "Column C" },
   { value: "Outdoors", emoji: "🌿", catalog: "Column C" },
+  { value: "Blocks and building", emoji: "🎨", catalog: "Column C" },
+  { value: "Water play", emoji: "🍼", catalog: "Column C" },
 ];
 
 export const FAMILY_NEED_TODDLER: QuestionOption[] = [
@@ -145,14 +198,17 @@ export const FUN_OR_LEARNING: QuestionOption[] = [
 export const TEEN_STYLES: QuestionOption[] = [
   { value: "Sporty", emoji: "🏃" },
   { value: "Girly", emoji: "💕" },
-  { value: "Trendy and streetwear", emoji: "💅" },
+  { value: "Trendy and streetwear", emoji: "🎧" },
   { value: "Cozy and casual", emoji: "🛋️" },
   { value: "Preppy", emoji: "👔" },
   { value: "Edgy", emoji: "✨" },
 ];
 
+/** Styles hidden when recipient is a boy / man. */
+export const TEEN_STYLES_BOY_HIDDEN = new Set(["Girly"]);
+
 export const TEEN_INTO: QuestionOption[] = [
-  { value: "Fashion", emoji: "💄", catalog: "Column C" },
+  { value: "Fashion", emoji: "👔", catalog: "Column C" },
   { value: "Beauty and hair", emoji: "💄", catalog: "Column C" },
   { value: "Tech", emoji: "📱", catalog: "Column C" },
   { value: "Sports", emoji: "🏃", catalog: "Column C" },
@@ -161,6 +217,12 @@ export const TEEN_INTO: QuestionOption[] = [
   { value: "Gaming", emoji: "🎮", catalog: "Column C" },
   { value: "Travel", emoji: "✈️", catalog: "Column C" },
 ];
+
+/** Interests hidden when recipient is a boy / man. */
+export const TEEN_INTO_BOY_HIDDEN = new Set(["Beauty and hair", "Princesses and dress up"]);
+
+/** Obsessed options hidden for boys (Path C). */
+export const OBSESSED_BOY_HIDDEN = new Set(["Princesses and dress up"]);
 
 export const WEAR_USE_DO: QuestionOption[] = [
   { value: "Something to wear", emoji: "👔", catalog: "wear_use_do=wear" },
@@ -285,6 +347,14 @@ export const STEPS: Record<string, StepDef> = {
     field: "ageRange",
     optionsKey: "age",
   },
+  gender: {
+    id: "gender",
+    title: "What's their gender?",
+    sub: "Helps us skip mismatched styles and gifts",
+    kind: "pills",
+    field: "gender",
+    optionsKey: "gender",
+  },
   graduationLevel: {
     id: "graduationLevel",
     title: "High school or college?",
@@ -362,7 +432,7 @@ export const STEPS: Record<string, StepDef> = {
     kind: "multi",
     field: "interests",
     maxSelect: 2,
-    options: OBSESSED,
+    optionsKey: "obsessed",
   },
   funOrLearning: {
     id: "funOrLearning",
@@ -376,7 +446,7 @@ export const STEPS: Record<string, StepDef> = {
     title: "What's their style?",
     kind: "single",
     field: "teenStyle",
-    options: TEEN_STYLES,
+    optionsKey: "teenStyle",
   },
   teenInto: {
     id: "teenInto",
@@ -385,7 +455,7 @@ export const STEPS: Record<string, StepDef> = {
     kind: "multi",
     field: "interests",
     maxSelect: 2,
-    options: TEEN_INTO,
+    optionsKey: "teenInto",
   },
   wearUseDo: {
     id: "wearUseDo",

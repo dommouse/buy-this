@@ -6,7 +6,9 @@ import { Button } from "@/components/ui/button";
 
 const menuItems = [
   { label: "BUY ME", to: "/buy-me" as const },
+  { label: "Blog", to: "/blogs" as const },
   { label: "Member Login", to: "/login" as const },
+  { label: "Register", to: "/register" as const },
   { label: "About / FAQ", to: "/about" as const },
 ];
 

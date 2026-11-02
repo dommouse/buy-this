@@ -8,7 +8,7 @@ import { buildFilterSpec, filterWithFallback, hardFilterCandidates } from "./bra
 import { buildSearchObjects } from "./brain/search-object";
 import { scoreGiftFit } from "./brain/scorer";
 import { engineConfig } from "./config";
-import { genderMismatch, rankByAnswerFit } from "./features/fit";
+import { genderMismatch } from "./features/fit";
 import type { ProfileFeatures } from "./features/profile";
 import { formatPickReason, SLOTS } from "./scoring/ranker";
 import { searchCuratedProducts, setCuratedExtraProducts } from "./stores/curated-search.server";
@@ -21,6 +21,18 @@ export type KeywordSearchOutcome = {
   items: Recommendation[];
 };
 
+function phraseMatchScore(product: Product, phrase: string): number {
+  const blob = `${product.title} ${product.description} ${product.category} ${product.tags.join(" ")}`.toLowerCase();
+  const words = phrase
+    .toLowerCase()
+    .split(/[^a-z0-9]+/)
+    .filter((w) => w.length > 2);
+  if (!words.length) return 0;
+  let hits = 0;
+  for (const w of words) if (blob.includes(w)) hits += 1;
+  return hits / words.length;
+}
+
 function pickFourSlots(
   pool: Product[],
   profile: RecipientProfile,
@@ -32,23 +44,31 @@ function pickFourSlots(
   const usedTitles = new Set<string>();
   const items: Recommendation[] = [];
   const phraseBySlot = new Map(phrases.map((p) => [p.slot, p]));
-  const ranked = rankByAnswerFit(
-    pool.filter((p) => !genderMismatch(p, features.gender, features.ageGroup)),
-    profile,
-    features,
-    statsByProduct,
-  );
+  const eligible = pool.filter((p) => !genderMismatch(p, features.gender, features.ageGroup));
 
   for (const slot of SLOTS) {
-    const product = ranked.find((p) => {
-      const asin = extractAsin(p.buyUrl)?.toUpperCase() || p.id;
-      return !used.has(asin) && !usedTitles.has(p.title.toLowerCase());
-    });
+    const phrase = phraseBySlot.get(slot);
+    // Per-slot ranking: answer fit + how well the product matches THIS slot's search phrase
+    const ranked = [...eligible]
+      .filter((p) => {
+        const asin = extractAsin(p.buyUrl)?.toUpperCase() || p.id;
+        return !used.has(asin) && !usedTitles.has(p.title.toLowerCase());
+      })
+      .sort((a, b) => {
+        const sa =
+          scoreGiftFit(a, profile, features, statsByProduct) +
+          phraseMatchScore(a, phrase?.phrase || "") * 0.8;
+        const sb =
+          scoreGiftFit(b, profile, features, statsByProduct) +
+          phraseMatchScore(b, phrase?.phrase || "") * 0.8;
+        return sb - sa;
+      });
+
+    const product = ranked[0];
     if (!product) continue;
     const asin = extractAsin(product.buyUrl)?.toUpperCase() || product.id;
     used.add(asin);
     usedTitles.add(product.title.toLowerCase());
-    const phrase = phraseBySlot.get(slot);
     const score = Number(
       Math.min(0.99, 0.5 + scoreGiftFit(product, profile, features, statsByProduct) * 0.45).toFixed(4),
     );

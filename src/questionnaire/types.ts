@@ -21,6 +21,7 @@ export type StepId =
   | "occasion"
   | "relationship"
   | "age"
+  | "gender"
   | "budget"
   | "firstBaby"
   | "parentType"
@@ -61,5 +62,14 @@ export type StepDef = {
   options?: QuestionOption[];
   placeholder?: string;
   /** Dynamic option filter key resolved in routing. */
-  optionsKey?: "age" | "budget" | "relationship" | "familyNeedChild" | "familyNeedOlder";
+  optionsKey?:
+    | "age"
+    | "budget"
+    | "relationship"
+    | "gender"
+    | "teenStyle"
+    | "teenInto"
+    | "obsessed"
+    | "familyNeedChild"
+    | "familyNeedOlder";
 };

@@ -31,3 +31,7 @@ dist-ssr
 *.sln
 *.sw?
 .env
+
+# User-uploaded banners (keep folder via .gitkeep)
+public/uploads/banners/*
+!public/uploads/banners/.gitkeep

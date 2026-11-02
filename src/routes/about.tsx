@@ -2,7 +2,7 @@ import { useState } from "react";
 import { Link, createFileRoute } from "@tanstack/react-router";
 import { ChevronDown } from "lucide-react";
 
-import { AppMenu } from "@/components/app-menu";
+import { PortalShell } from "@/components/portal/portal-shell";
 import { cn } from "@/lib/utils";
 
 export const Route = createFileRoute("/about")({
@@ -46,8 +46,7 @@ function AboutPage() {
   const [openIndex, setOpenIndex] = useState<number | null>(null);
 
   return (
-    <main className="relative min-h-dvh bg-background px-6 py-20 sm:py-24">
-      <AppMenu />
+    <PortalShell title="About / FAQ">
       <div className="mx-auto w-full max-w-xl">
         <section className="text-center">
           <h1 className="text-3xl font-semibold text-foreground sm:text-4xl">
@@ -107,6 +106,6 @@ function AboutPage() {
           </Link>
         </p>
       </div>
-    </main>
+    </PortalShell>
   );
 }

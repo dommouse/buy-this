@@ -105,6 +105,154 @@ export type ModelVersionRow = {
   metrics: Json;
 };
 
+export type AdminUserRow = {
+  id: string;
+  created_at: string;
+  updated_at: string;
+  name: string;
+  email: string;
+  password_hash: string;
+  role: "super" | "admin";
+  is_active: boolean;
+  last_login_at: string | null;
+};
+
+export type AdminSessionRow = {
+  id: string;
+  created_at: string;
+  admin_user_id: string;
+  token_hash: string;
+  expires_at: string;
+};
+
+export type PortalUserRow = {
+  id: string;
+  created_at: string;
+  updated_at: string;
+  name: string;
+  email: string;
+  password_hash: string;
+  is_active: boolean;
+  email_verified_at: string | null;
+};
+
+export type PortalSessionRow = {
+  id: string;
+  created_at: string;
+  portal_user_id: string;
+  token_hash: string;
+  expires_at: string;
+};
+
+export type NewsletterSubscriberRow = {
+  id: string;
+  created_at: string;
+  updated_at: string;
+  email: string;
+  source: string;
+  status: "subscribed" | "unsubscribed";
+  unsubscribe_token: string;
+  meta: Json;
+};
+
+export type NewsletterCampaignRow = {
+  id: string;
+  created_at: string;
+  updated_at: string;
+  subject: string;
+  html_body: string;
+  status: "draft" | "sending" | "sent" | "failed";
+  sent_at: string | null;
+  recipient_count: number;
+  created_by: string | null;
+};
+
+export type NewsletterSettingsRow = {
+  id: number;
+  enabled: boolean;
+  from_name: string;
+  footer_html: string;
+  double_opt_in: boolean;
+  updated_at: string;
+};
+
+export type GiftCatalogRow = {
+  id: string;
+  created_at: string;
+  updated_at: string;
+  sku: string;
+  title: string;
+  description: string;
+  retailer: string;
+  price: number | null;
+  price_tier: string | null;
+  occasion: string;
+  relationship: string;
+  gender: string;
+  age_start: number | null;
+  age_end: number | null;
+  tags: string[];
+  slot: string;
+  gift_note: string;
+  available_from: string | null;
+  available_to: string | null;
+  category: string;
+  verification_note: string;
+  status: string;
+  buy_url: string;
+  asin: string | null;
+  external_ref: string;
+  is_dead: boolean;
+  last_synced_at: string | null;
+};
+
+export type BlogRow = {
+  id: string;
+  created_at: string;
+  updated_at: string;
+  title: string;
+  slug: string;
+  excerpt: string;
+  content_html: string;
+  cover_url: string | null;
+  author_admin_id: string | null;
+  status: "draft" | "published";
+  sort_order: number;
+  seo_title: string | null;
+  seo_description: string | null;
+  published_at: string | null;
+  view_count: number;
+};
+
+export type AppSettingRow = {
+  key: string;
+  value: Json;
+  updated_at: string;
+};
+
+export type AdminAuditLogRow = {
+  id: string;
+  created_at: string;
+  admin_user_id: string | null;
+  action: string;
+  entity: string;
+  entity_id: string | null;
+  payload: Json;
+};
+
+export type HomeBannerRow = {
+  id: string;
+  created_at: string;
+  updated_at: string;
+  title: string;
+  description: string;
+  image_url: string;
+  link_url: string;
+  cta_label: string;
+  sort_order: number;
+  is_active: boolean;
+};
+
 type Table<Row, Required extends keyof Row> = {
   Row: Row;
   Insert: Pick<Row, Required> & Partial<Omit<Row, Required>>;
@@ -128,6 +276,18 @@ export type Database = {
         "product_id" | "segment" | "impressions" | "clicks" | "model_version"
       >;
       model_versions: Table<ModelVersionRow, "version">;
+      admin_users: Table<AdminUserRow, "name" | "email" | "password_hash">;
+      admin_sessions: Table<AdminSessionRow, "admin_user_id" | "token_hash" | "expires_at">;
+      portal_users: Table<PortalUserRow, "name" | "email" | "password_hash">;
+      portal_sessions: Table<PortalSessionRow, "portal_user_id" | "token_hash" | "expires_at">;
+      newsletter_subscribers: Table<NewsletterSubscriberRow, "email">;
+      newsletter_campaigns: Table<NewsletterCampaignRow, "subject">;
+      newsletter_settings: Table<NewsletterSettingsRow, never>;
+      gift_catalog: Table<GiftCatalogRow, "sku" | "title">;
+      blogs: Table<BlogRow, "title" | "slug">;
+      home_banners: Table<HomeBannerRow, "image_url">;
+      app_settings: Table<AppSettingRow, "key" | "value">;
+      admin_audit_log: Table<AdminAuditLogRow, "action">;
     };
     Views: Record<string, never>;
     Functions: {

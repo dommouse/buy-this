@@ -186,3 +186,46 @@
   to { opacity: 1; transform: translateX(0); }
 }
 .animate-question-in { animation: question-in 0.35s ease-out both; }
+
+/* Glossy portal surfaces */
+.portal-gloss {
+  background:
+    radial-gradient(1200px 600px at 10% -10%, oklch(0.92 0.06 350 / 0.55), transparent 55%),
+    radial-gradient(900px 500px at 100% 0%, oklch(0.94 0.04 20 / 0.45), transparent 50%),
+    linear-gradient(180deg, oklch(0.99 0.01 10), oklch(0.97 0.01 8));
+}
+
+.glass-panel {
+  background: oklch(1 0 0 / 0.55);
+  backdrop-filter: blur(16px) saturate(1.35);
+  -webkit-backdrop-filter: blur(16px) saturate(1.35);
+  border: 1px solid oklch(1 0 0 / 0.35);
+  box-shadow:
+    0 1px 0 oklch(1 0 0 / 0.55) inset,
+    0 18px 40px oklch(0.35 0.04 350 / 0.08);
+}
+
+.banner-glass {
+  background: linear-gradient(
+    180deg,
+    oklch(0.2 0.02 350 / 0.08),
+    oklch(0.15 0.02 350 / 0.28)
+  );
+  backdrop-filter: blur(10px) saturate(1.2);
+  -webkit-backdrop-filter: blur(10px) saturate(1.2);
+  border-radius: 1.25rem;
+  border: 1px solid transparent;
+  box-shadow:
+    0 0 0 1px oklch(1 0 0 / 0.12),
+    0 12px 40px oklch(0 0 0 / 0.18);
+  /* Soft faded edge — not a hard box outline */
+  -webkit-mask-image: radial-gradient(ellipse 95% 90% at 50% 60%, #000 55%, transparent 100%);
+  mask-image: radial-gradient(ellipse 95% 90% at 50% 60%, #000 55%, transparent 100%);
+}
+
+.glass-drawer {
+  background: oklch(1 0 0 / 0.82);
+  backdrop-filter: blur(20px) saturate(1.4);
+  -webkit-backdrop-filter: blur(20px) saturate(1.4);
+  box-shadow: 8px 0 40px oklch(0.3 0.04 350 / 0.12);
+}

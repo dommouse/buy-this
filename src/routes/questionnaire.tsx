@@ -2,7 +2,7 @@ import { useMemo, useRef, useState } from "react";
 import { Link, createFileRoute, useNavigate } from "@tanstack/react-router";
 import { Check, Home, ImagePlus, X } from "lucide-react";
 
-import { AppMenu } from "@/components/app-menu";
+import { PortalShell } from "@/components/portal/portal-shell";
 import { Button } from "@/components/ui/button";
 import { emptyAnswers, useGiftAnswers, type GiftAnswers } from "@/lib/gift-answers-context";
 import { cn } from "@/lib/utils";
@@ -93,18 +93,40 @@ function QuestionnairePage() {
         }
         next.ageRange = "";
         next.graduationLevel = "";
+        next.gender = "";
         next.budget = "";
         next.interests = [];
+        next.teenStyle = "";
       }
       if (key === "relationship") {
         next.ageRange = "";
+        next.gender = "";
         next.budget = "";
+        next.interests = [];
+        next.teenStyle = "";
+      }
+      if (key === "ageRange") {
+        next.gender = "";
+        // Clear boy-only-incompatible style if age flips into teen path later
+        next.teenStyle = "";
+        next.interests = [];
+      }
+      if (key === "gender") {
+        // Drop girly / beauty picks if they switch to boy
+        const g = String(value);
+        if (/^(boy|man|male)$/i.test(g)) {
+          if (next.teenStyle === "Girly") next.teenStyle = "";
+          next.interests = next.interests.filter(
+            (i) => i !== "Beauty and hair" && i !== "Princesses and dress up",
+          );
+        }
       }
       next.path = resolvePath({
         occasion: next.occasion,
         relationship: next.relationship,
         ageRange: next.ageRange || (next.graduationLevel ? "20-39" : ""),
         graduationLevel: next.graduationLevel,
+        gender: next.gender,
       });
       return next;
     });
@@ -160,12 +182,16 @@ function QuestionnairePage() {
         ? a.interests
         : [a.helpWith, a.familyNeed, a.favorites, a.neverBuy].filter(Boolean);
 
+    const gender =
+      /prefer not/i.test(a.gender) || !a.gender.trim() ? "" : a.gender.trim();
+
     const final: GiftAnswers = {
       ...a,
       path,
       vibe,
       wants: a.wants || wants,
       interests,
+      gender,
       ageRange: a.ageRange || (a.graduationLevel ? "20-39" : a.ageRange),
     };
     console.log("BUY THIS answers:", final);
@@ -212,8 +238,8 @@ function QuestionnairePage() {
     step === "relationship" ? relationshipTitle(a.occasion) : def.title;
 
   return (
-    <main className="min-h-dvh bg-background px-4 pb-8 pt-20 text-foreground sm:pt-24">
-      <AppMenu />
+    <PortalShell hideChrome confirmLeave>
+      <div className="mx-auto max-w-2xl px-4 pb-8 pt-6 text-foreground sm:px-6">
       <div className="mx-auto w-full max-w-2xl">
         <Button asChild variant="ghost" className="mb-3 min-h-11 gap-2 px-2 text-muted-foreground hover:text-primary">
           <Link to="/">
@@ -307,7 +333,8 @@ function QuestionnairePage() {
           </div>
         </div>
       </div>
-    </main>
+      </div>
+    </PortalShell>
   );
 }
 
@@ -325,6 +352,7 @@ function StepBody({ step, title, a, update, onSkip }: BodyProps) {
     occasion: a.occasion,
     relationship: a.relationship,
     ageRange: a.ageRange,
+    gender: a.gender,
   });
 
   const heading = <Heading title={title} {...(def.sub ? { sub: def.sub } : {})} />;
@@ -484,6 +512,7 @@ function Pills({
             type="button"
             role="radio"
             aria-checked={on}
+            title={o.hint || o.value}
             onClick={() => onChange(o.value)}
             className={cn(
               "inline-flex min-h-11 items-center gap-2 rounded-full border px-5 text-sm font-medium transition-all active:scale-95",
@@ -491,7 +520,14 @@ function Pills({
             )}
           >
             <EmojiIcon emoji={o.emoji} />
-            {o.value}
+            <span className="inline-flex flex-col items-start leading-tight">
+              <span>{o.value}</span>
+              {o.hint && (
+                <span className={cn("text-[10px] font-normal", on ? "text-primary-foreground/80" : "text-muted-foreground")}>
+                  {o.hint}
+                </span>
+              )}
+            </span>
           </button>
         );
       })}

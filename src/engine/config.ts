@@ -53,7 +53,7 @@ export type AvoidCategory = {
   terms: string[];
 };
 
-const DEFAULT_AVOID_CATEGORIES: AvoidCategory[] = [
+export const DEFAULT_AVOID_CATEGORIES: AvoidCategory[] = [
   {
     id: "candles",
     label: "candles",
@@ -219,6 +219,7 @@ export const engineConfig = {
 
   /** Supabase service role for elevated engine writes on live. */
   supabaseServiceRoleKey: engineEnv("SUPABASE_SERVICE_ROLE_KEY"),
-} as const;
+};
 
+/** Mutable so `applyDbEngineOverrides()` can patch non-secret knobs at runtime. */
 export type EngineConfig = typeof engineConfig;

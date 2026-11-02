@@ -42,56 +42,103 @@ function overlaps(hay: string[] | undefined, needles: string[]): boolean {
   return needles.some((n) => lower.some((h) => h.includes(n.toLowerCase()) || n.toLowerCase().includes(h)));
 }
 
+/** How well a catalog row matches questionnaire answers (higher = better). */
+export function catalogAnswerScore(
+  p: Product,
+  spec: FilterSpec,
+  features: ProfileFeatures,
+): number {
+  let score = 0;
+  const blob = `${p.title} ${p.description} ${p.category} ${p.tags.join(" ")} ${(p.parentTypes || []).join(" ")} ${(p.occasions || []).join(" ")}`.toLowerCase();
+
+  if (spec.occasion && overlaps(p.occasions, [spec.occasion])) score += 4;
+  else if (spec.occasion && p.occasions?.length) score -= 1; // tagged for other occasions
+
+  if (spec.relationship && overlaps(p.relationships, [spec.relationship, "Friend", "Family"])) {
+    score += 2;
+  }
+  if (spec.relationship === "Grandparent" && /grandparent|grandma|grandpa|grand/i.test(blob)) {
+    score += 3;
+  }
+
+  for (const pers of spec.personality) {
+    const pl = pers.toLowerCase();
+    if (overlaps(p.parentTypes, [pers]) || overlaps(p.tags, [pers]) || blob.includes(pl)) score += 3;
+  }
+  if (spec.parentType && (overlaps(p.parentTypes, [spec.parentType]) || blob.includes(spec.parentType.toLowerCase()))) {
+    score += 3;
+  }
+  if (spec.helpWith && (overlaps(p.tags, [spec.helpWith]) || blob.includes(spec.helpWith.toLowerCase()))) {
+    score += 4;
+  }
+  for (const interest of spec.interests) {
+    const words = interest
+      .toLowerCase()
+      .split(/[^a-z0-9]+/)
+      .filter((w) => w.length > 2);
+    if (words.some((w) => blob.includes(w))) score += 2;
+  }
+  if (spec.wearUseDo && p.wearUseDo && p.wearUseDo === spec.wearUseDo) score += 2;
+
+  const tier = budgetToTier(spec.budget);
+  if (tier && p.priceTier === tier) score += 1;
+
+  if (features.gender === "woman" && (p.audience === "women" || /\bwomen|girls|beauty|skincare\b/i.test(blob))) {
+    score += 1.5;
+  }
+  if (features.gender === "man" && (p.audience === "men" || /\bmen|boys|grooming\b/i.test(blob))) {
+    score += 1.5;
+  }
+  // Penalize girly/beauty catalog hits for boys
+  if (features.gender === "man" && /\b(girly|princess|nail polish|makeup|lipstick|mascara)\b/i.test(blob)) {
+    score -= 5;
+  }
+
+  return score;
+}
+
 /**
- * Hard filters that must never drop: budget wall, age rules, relationship rules, blacklist.
- * Soft layers (wear → interests → personality) can be relaxed when pool is thin.
+ * Hard filters that must never drop: budget wall, age rules, blacklist.
+ * Occasion / personality are SOFT (scored) so different answers yield different pools —
+ * hard occasion drops were making every path fall back to the same thin set.
  */
 export function filterCatalogPool(
   products: Product[],
   spec: FilterSpec,
   profile: RecipientProfile,
   features: ProfileFeatures,
-  opts?: { dropWear?: boolean; dropInterests?: boolean; dropPersonality?: boolean },
+  opts?: { dropWear?: boolean; dropInterests?: boolean; dropPersonality?: boolean; requireOccasion?: boolean },
 ): Product[] {
   const tier = budgetToTier(spec.budget);
-  const ageTag = spec.ageRange ? `Age ${spec.ageRange}` : "";
 
   let pool = products.filter((p) => {
-    // Budget hard wall 75–100%
+    // Budget hard wall
     if (p.price < spec.priceMin || p.price > spec.priceMax) return false;
     if (titleHitsBlocklist(p.title, profile, features)) return false;
 
-    // Age group hard (Baby Shower uses child; also allow adult postpartum items tagged adult)
+    // Age group hard
     if (p.ageGroups.length) {
       const ageOk =
         p.ageGroups.includes(features.ageGroup) ||
         (features.ageGroup === "teen" && p.ageGroups.includes("adult")) ||
+        (features.ageGroup === "adult" && p.ageGroups.includes("teen")) ||
         (/baby shower/i.test(spec.occasion) &&
           (p.ageGroups.includes("child") || p.ageGroups.includes("adult") || p.category.toLowerCase() === "baby"));
       if (!ageOk) return false;
     }
 
-    // Occasion soft-tagged
-    if (p.occasions?.length) {
-      const okOcc =
-        overlaps(p.occasions, [spec.occasion]) ||
-        (ageTag ? overlaps(p.occasions, [ageTag, spec.ageRange]) : false);
-      if (!okOcc && spec.occasion) return false;
+    // Optional hard occasion (only when pool is rich)
+    if (opts?.requireOccasion && spec.occasion && p.occasions?.length) {
+      if (!overlaps(p.occasions, [spec.occasion])) return false;
     }
 
-    // Relationship soft-tagged
-    if (p.relationships?.length && spec.relationship) {
-      if (!overlaps(p.relationships, [spec.relationship, "Friend", "Family"])) {
-        // Coworker strict
-        if (/coworker|boss/i.test(spec.relationship) && !overlaps(p.relationships, ["Coworker or Boss", "Coworker"])) {
-          return false;
-        }
-      }
+    // Coworker relationship still stricter
+    if (p.relationships?.length && /coworker|boss/i.test(spec.relationship)) {
+      if (!overlaps(p.relationships, ["Coworker or Boss", "Coworker", "Friend"])) return false;
     }
 
-    // Price tier soft match when present
+    // Price tier: allow adjacent
     if (tier && p.priceTier && p.priceTier !== tier) {
-      // allow adjacent tier one step
       const order = ["$", "$$", "$$$", "$$$$"];
       const a = order.indexOf(tier);
       const b = order.indexOf(p.priceTier);
@@ -100,6 +147,11 @@ export function filterCatalogPool(
 
     return true;
   });
+
+  // Rank by answer fit so soft layers keep the best matches first
+  pool = [...pool].sort(
+    (a, b) => catalogAnswerScore(b, spec, features) - catalogAnswerScore(a, spec, features),
+  );
 
   if (!opts?.dropWear && spec.wearUseDo) {
     const narrowed = pool.filter((p) => !p.wearUseDo || p.wearUseDo === spec.wearUseDo);
@@ -120,9 +172,11 @@ export function filterCatalogPool(
     if (narrowed.length >= 4) pool = narrowed;
   }
 
-  if (!opts?.dropPersonality && (spec.personality.length || spec.parentType)) {
-    const needles = [...spec.personality, spec.parentType].filter(Boolean);
-    const narrowed = pool.filter((p) => overlaps(p.parentTypes, needles) || overlaps(p.tags, needles));
+  if (!opts?.dropPersonality && (spec.personality.length || spec.parentType || spec.helpWith)) {
+    const needles = [...spec.personality, spec.parentType, spec.helpWith].filter(Boolean);
+    const narrowed = pool.filter(
+      (p) => overlaps(p.parentTypes, needles) || overlaps(p.tags, needles) || catalogAnswerScore(p, spec, features) >= 3,
+    );
     if (narrowed.length >= 4) pool = narrowed;
   }
 
@@ -138,6 +192,7 @@ export function filterWithFallback(
   min = 15,
 ): Product[] {
   const attempts = [
+    { requireOccasion: true },
     {},
     { dropWear: true },
     { dropWear: true, dropInterests: true },
@@ -149,7 +204,9 @@ export function filterWithFallback(
     if (pool.length >= min) return pool;
     if (opts === attempts[attempts.length - 1]) return pool;
   }
-  return products.filter((p) => p.price >= spec.priceMin && p.price <= spec.priceMax);
+  return products
+    .filter((p) => p.price >= spec.priceMin && p.price <= spec.priceMax)
+    .sort((a, b) => catalogAnswerScore(b, spec, features) - catalogAnswerScore(a, spec, features));
 }
 
 export function hardFilterCandidates(
@@ -159,14 +216,14 @@ export function hardFilterCandidates(
   features: ProfileFeatures,
   usedAsins: Set<string>,
 ): Product[] {
-  // Soft floor (~70% of wall min) so relevant curated gifts just under the
-  // 75% wall still enter the pool and can be live-resolved.
   const softMin = spec.priceMin > 0 ? spec.priceMin * 0.7 : 0;
-  return products.filter((p) => {
-    if (p.price < softMin || p.price > spec.priceMax) return false;
-    if (titleHitsBlocklist(p.title, profile, features)) return false;
-    const asin = extractAsin(p.buyUrl)?.toUpperCase() || p.id.toUpperCase();
-    if (usedAsins.has(asin)) return false;
-    return true;
-  });
+  return products
+    .filter((p) => {
+      if (p.price < softMin || p.price > spec.priceMax) return false;
+      if (titleHitsBlocklist(p.title, profile, features)) return false;
+      const asin = extractAsin(p.buyUrl)?.toUpperCase() || p.id.toUpperCase();
+      if (usedAsins.has(asin)) return false;
+      return true;
+    })
+    .sort((a, b) => catalogAnswerScore(b, spec, features) - catalogAnswerScore(a, spec, features));
 }

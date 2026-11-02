@@ -22,11 +22,12 @@ export type GenderFit = "woman" | "man" | "nonbinary" | "unspecified";
 export function normalizeGender(raw: string | null | undefined): GenderFit {
   const g = (raw || "").trim().toLowerCase();
   if (!g || /prefer|rather|skip|n\/a|none|unknown|any|all/.test(g)) return "unspecified";
-  if (/^(woman|women|female|girl|she|her)\b/.test(g) || g === "f") return "woman";
-  if (/^(man|men|male|boy|he|him)\b/.test(g) || g === "m") return "man";
+  if (/^(woman|women|female|girl|she|her)\b/.test(g) || g === "f" || g === "girl") return "woman";
+  if (/^(man|men|male|boy|he|him)\b/.test(g) || g === "m" || g === "boy") return "man";
   if (/non.?binary|enby|gender.?fluid|they/.test(g)) return "nonbinary";
-  if (/woman|female|girl/.test(g)) return "woman";
-  if (/man|male|boy/.test(g)) return "man";
+  if (/\bgirl\b|\bwoman\b|\bfemale\b/.test(g)) return "woman";
+  // Word-boundary — avoid matching "Woman" as man
+  if (/\bboy\b|\bmen\b|\bmale\b/.test(g) || g === "man") return "man";
   return "unspecified";
 }
 

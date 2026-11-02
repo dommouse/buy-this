@@ -1,9 +1,14 @@
 import { Link, createFileRoute } from "@tanstack/react-router";
+import { Gift, Sparkles } from "lucide-react";
+import { useEffect, useState } from "react";
 
-import { AppMenu } from "@/components/app-menu";
-import { Button } from "@/components/ui/button";
+import { listActiveBanners } from "@/admin/modules/banners/banners.functions";
+import { listPublishedBlogs } from "@/admin/modules/blogs/blogs.functions";
 import logoUrl from "@/assets/relationship-concierge-logo.png";
-
+import { BannerSlider, type BannerSlide } from "@/components/portal/banner-slider";
+import { PortalShell } from "@/components/portal/portal-shell";
+import { ScrollReveal } from "@/components/portal/scroll-reveal";
+import { Button } from "@/components/ui/button";
 
 export const Route = createFileRoute("/")({
   head: () => ({
@@ -26,29 +31,114 @@ export const Route = createFileRoute("/")({
 });
 
 function Index() {
-  return (
-    <main className="relative grid min-h-dvh grid-rows-[1fr_auto] bg-background px-6 pb-5 pt-20 sm:pb-6 sm:pt-24">
-      <AppMenu />
-      <section className="flex min-h-0 items-center justify-center">
-        <div className="mx-auto flex w-full max-w-xl flex-col items-center text-center">
-          <img
-            src={logoUrl}
-            alt="BUY THIS - Relationship Concierge"
-            className="w-[200px] sm:w-[300px]"
-          />
+  const [banners, setBanners] = useState<BannerSlide[]>([]);
+  const [blogs, setBlogs] = useState<Awaited<ReturnType<typeof listPublishedBlogs>>>([]);
 
-          <p className="mt-7 text-balance text-xl font-medium leading-8 text-foreground sm:mt-8 sm:text-2xl">
-            Every person. Every occasion. The perfect gift.
-          </p>
-          <Button
-            asChild
-            className="mt-8 h-14 w-full max-w-sm rounded-lg px-10 text-base font-bold uppercase shadow-md transition-transform duration-200 hover:scale-[1.02] active:scale-[0.99] sm:w-auto sm:min-w-56"
-          >
-            <Link to="/questionnaire">BUY THIS</Link>
-          </Button>
-        </div>
+  useEffect(() => {
+    (async () => {
+      try {
+        const [b, posts] = await Promise.all([
+          listActiveBanners(),
+          listPublishedBlogs({ data: { limit: 10 } }),
+        ]);
+        setBanners(b);
+        setBlogs(posts);
+      } catch {
+        /* keep empty fallbacks */
+      }
+    })();
+  }, []);
+
+  return (
+    <PortalShell landing fullBleed>
+      <section id="hero" className="scroll-mt-16">
+        <BannerSlider slides={banners} />
       </section>
-      <p className="pt-8 text-center text-xs text-branding">Powered by Relationship Concierge</p>
-    </main>
+
+      <section id="find-a-gift" className="scroll-mt-16 px-4 py-16 sm:px-6 lg:px-10">
+        <ScrollReveal>
+          <button
+            type="button"
+            onClick={() => {
+              window.location.href = "/questionnaire";
+            }}
+            className="glass-panel group mx-auto flex w-full max-w-6xl flex-col rounded-3xl p-6 text-left transition-all hover:bg-white/60 sm:p-10 lg:p-12"
+          >
+            <div className="mb-8 flex justify-center sm:mb-10">
+              <img
+                src={logoUrl}
+                alt="Relationship Concierge"
+                className="h-28 w-auto max-w-[360px] object-contain sm:h-40 sm:max-w-[440px]"
+              />
+            </div>
+            <div className="flex flex-col gap-6 sm:flex-row sm:items-center">
+              <div className="flex size-14 shrink-0 items-center justify-center rounded-2xl bg-primary/15 text-primary">
+                <Gift className="size-7" />
+              </div>
+              <div className="min-w-0 flex-1">
+                <p className="inline-flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wide text-primary">
+                  <Sparkles className="size-3.5" />
+                  Find A Gift
+                </p>
+                <h2 className="mt-2 text-2xl font-semibold tracking-tight text-foreground sm:text-3xl">
+                  Not sure what to buy them?
+                </h2>
+                <p className="mt-2 max-w-3xl text-pretty text-base leading-7 text-muted-foreground">
+                  Walk through a short scenario about who they are, the occasion, and your budget. We turn
+                  those answers into a focused shortlist of gifts you can open and buy.
+                </p>
+              </div>
+              <Button asChild size="lg" className="pointer-events-none shrink-0 font-bold uppercase">
+                <span>Find A Gift</span>
+              </Button>
+            </div>
+          </button>
+        </ScrollReveal>
+      </section>
+
+      <section id="blogs" className="scroll-mt-16 border-t border-white/40 bg-white/25 px-4 py-16 sm:px-6 lg:px-10">
+        <ScrollReveal delayMs={80}>
+          <div className="mx-auto max-w-5xl">
+            <div className="flex items-end justify-between gap-4">
+              <div>
+                <h2 className="text-2xl font-semibold tracking-tight text-foreground">From the blog</h2>
+                <p className="mt-1 text-sm text-muted-foreground">Guides and ideas worth saving.</p>
+              </div>
+              <Link to="/blogs" className="shrink-0 text-sm font-medium text-primary hover:underline">
+                View all
+              </Link>
+            </div>
+            <div className="mt-8 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+              {blogs.map((b, i) => (
+                <ScrollReveal key={b.id} delayMs={40 * (i % 3)}>
+                  <Link
+                    to="/blogs/$slug"
+                    params={{ slug: b.slug }}
+                    className="glass-panel flex h-full flex-col overflow-hidden rounded-2xl transition-transform hover:-translate-y-1"
+                  >
+                    {b.cover_url ? (
+                      <img src={b.cover_url} alt="" className="h-36 w-full object-cover" />
+                    ) : (
+                      <div className="flex h-36 items-center justify-center bg-primary/5 text-primary/40">
+                        <Gift className="size-10" />
+                      </div>
+                    )}
+                    <div className="flex flex-1 flex-col p-4">
+                      <h3 className="font-semibold text-foreground">{b.title}</h3>
+                      {b.excerpt ? (
+                        <p className="mt-2 line-clamp-3 text-sm text-muted-foreground">{b.excerpt}</p>
+                      ) : null}
+                    </div>
+                  </Link>
+                </ScrollReveal>
+              ))}
+            </div>
+            {!blogs.length ? (
+              <p className="mt-6 text-sm text-muted-foreground">No published posts yet — check back soon.</p>
+            ) : null}
+          </div>
+        </ScrollReveal>
+      </section>
+    </PortalShell>
   );
 }

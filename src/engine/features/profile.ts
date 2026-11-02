@@ -53,11 +53,16 @@ function mapGiftType(p: RecipientProfile): GiftType | null {
 export function extractProfileFeatures(p: RecipientProfile): ProfileFeatures {
   const ageRange = p.ageRange || (p.graduationLevel ? "20-39" : "");
   let ageGroup: AgeGroup = "adult";
-  if (CHILD_AGES.includes(ageRange) || (p.relationship === "Child" && !TEEN_AGES.includes(ageRange))) {
-    ageGroup = ageRange === "10-15" || ageRange === "16-19" || TEEN_AGES.includes(ageRange) ? "teen" : "child";
+  if (TEEN_AGES.includes(ageRange) || ageRange === "10-15" || ageRange === "16-19") {
+    ageGroup = "teen";
+  } else if (CHILD_AGES.includes(ageRange) || ["1-3", "4-9"].includes(ageRange)) {
+    ageGroup = "child";
+  } else if (["20-39", "40+"].includes(ageRange)) {
+    // Adult kids (Child + 20+) still score as adult catalog
+    ageGroup = "adult";
+  } else if (p.relationship === "Child" && !ageRange) {
+    ageGroup = "child";
   }
-  if (TEEN_AGES.includes(ageRange) || ageRange === "10-15" || ageRange === "16-19") ageGroup = "teen";
-  if (["1-3", "4-9"].includes(ageRange)) ageGroup = "child";
   // Baby Shower has no age step — catalog products are tagged child/baby.
   if (/baby shower/i.test(p.occasion)) ageGroup = "child";
 

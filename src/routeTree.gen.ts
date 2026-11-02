@@ -11,10 +11,29 @@
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as AboutRouteImport } from './routes/about'
+import { Route as AdminRouteRouteImport } from './routes/admin/route'
 import { Route as BuyMeRouteImport } from './routes/buy-me'
+import { Route as ContactRouteImport } from './routes/contact'
 import { Route as LoginRouteImport } from './routes/login'
+import { Route as LogoutRouteImport } from './routes/logout'
 import { Route as QuestionnaireRouteImport } from './routes/questionnaire'
+import { Route as RegisterRouteImport } from './routes/register'
 import { Route as ResultsRouteImport } from './routes/results'
+import { Route as AdminIndexRouteImport } from './routes/admin/index'
+import { Route as AdminGiftBrainRouteImport } from './routes/admin/gift-brain'
+import { Route as AdminLoginRouteImport } from './routes/admin/login'
+import { Route as AdminProfileRouteImport } from './routes/admin/profile'
+import { Route as AdminSettingsRouteImport } from './routes/admin/settings'
+import { Route as BlogsIndexRouteImport } from './routes/blogs/index'
+import { Route as BlogsSlugRouteImport } from './routes/blogs/$slug'
+import { Route as NewsletterUnsubscribeRouteImport } from './routes/newsletter/unsubscribe'
+import { Route as AdminAdminsIndexRouteImport } from './routes/admin/admins/index'
+import { Route as AdminBannersIndexRouteImport } from './routes/admin/banners/index'
+import { Route as AdminBlogsIndexRouteImport } from './routes/admin/blogs/index'
+import { Route as AdminBlogsIdRouteImport } from './routes/admin/blogs/$id'
+import { Route as AdminCatalogIndexRouteImport } from './routes/admin/catalog/index'
+import { Route as AdminNewsletterIndexRouteImport } from './routes/admin/newsletter/index'
+import { Route as AdminUsersIndexRouteImport } from './routes/admin/users/index'
 
 const IndexRoute = IndexRouteImport.update({
   id: '/',
@@ -26,9 +45,19 @@ const AboutRoute = AboutRouteImport.update({
   path: '/about',
   getParentRoute: () => rootRouteImport,
 } as any)
+const AdminRouteRoute = AdminRouteRouteImport.update({
+  id: '/admin',
+  path: '/admin',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const BuyMeRoute = BuyMeRouteImport.update({
   id: '/buy-me',
   path: '/buy-me',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ContactRoute = ContactRouteImport.update({
+  id: '/contact',
+  path: '/contact',
   getParentRoute: () => rootRouteImport,
 } as any)
 const LoginRoute = LoginRouteImport.update({
@@ -36,9 +65,19 @@ const LoginRoute = LoginRouteImport.update({
   path: '/login',
   getParentRoute: () => rootRouteImport,
 } as any)
+const LogoutRoute = LogoutRouteImport.update({
+  id: '/logout',
+  path: '/logout',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const QuestionnaireRoute = QuestionnaireRouteImport.update({
   id: '/questionnaire',
   path: '/questionnaire',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const RegisterRoute = RegisterRouteImport.update({
+  id: '/register',
+  path: '/register',
   getParentRoute: () => rootRouteImport,
 } as any)
 const ResultsRoute = ResultsRouteImport.update({
@@ -46,55 +85,260 @@ const ResultsRoute = ResultsRouteImport.update({
   path: '/results',
   getParentRoute: () => rootRouteImport,
 } as any)
+const AdminIndexRoute = AdminIndexRouteImport.update({
+  id: '/',
+  path: '/',
+  getParentRoute: () => AdminRouteRoute,
+} as any)
+const AdminGiftBrainRoute = AdminGiftBrainRouteImport.update({
+  id: '/gift-brain',
+  path: '/gift-brain',
+  getParentRoute: () => AdminRouteRoute,
+} as any)
+const AdminLoginRoute = AdminLoginRouteImport.update({
+  id: '/login',
+  path: '/login',
+  getParentRoute: () => AdminRouteRoute,
+} as any)
+const AdminProfileRoute = AdminProfileRouteImport.update({
+  id: '/profile',
+  path: '/profile',
+  getParentRoute: () => AdminRouteRoute,
+} as any)
+const AdminSettingsRoute = AdminSettingsRouteImport.update({
+  id: '/settings',
+  path: '/settings',
+  getParentRoute: () => AdminRouteRoute,
+} as any)
+const BlogsIndexRoute = BlogsIndexRouteImport.update({
+  id: '/blogs/',
+  path: '/blogs/',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const BlogsSlugRoute = BlogsSlugRouteImport.update({
+  id: '/blogs/$slug',
+  path: '/blogs/$slug',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const NewsletterUnsubscribeRoute = NewsletterUnsubscribeRouteImport.update({
+  id: '/newsletter/unsubscribe',
+  path: '/newsletter/unsubscribe',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const AdminAdminsIndexRoute = AdminAdminsIndexRouteImport.update({
+  id: '/admins/',
+  path: '/admins/',
+  getParentRoute: () => AdminRouteRoute,
+} as any)
+const AdminBannersIndexRoute = AdminBannersIndexRouteImport.update({
+  id: '/banners/',
+  path: '/banners/',
+  getParentRoute: () => AdminRouteRoute,
+} as any)
+const AdminBlogsIndexRoute = AdminBlogsIndexRouteImport.update({
+  id: '/blogs/',
+  path: '/blogs/',
+  getParentRoute: () => AdminRouteRoute,
+} as any)
+const AdminBlogsIdRoute = AdminBlogsIdRouteImport.update({
+  id: '/blogs/$id',
+  path: '/blogs/$id',
+  getParentRoute: () => AdminRouteRoute,
+} as any)
+const AdminCatalogIndexRoute = AdminCatalogIndexRouteImport.update({
+  id: '/catalog/',
+  path: '/catalog/',
+  getParentRoute: () => AdminRouteRoute,
+} as any)
+const AdminNewsletterIndexRoute = AdminNewsletterIndexRouteImport.update({
+  id: '/newsletter/',
+  path: '/newsletter/',
+  getParentRoute: () => AdminRouteRoute,
+} as any)
+const AdminUsersIndexRoute = AdminUsersIndexRouteImport.update({
+  id: '/users/',
+  path: '/users/',
+  getParentRoute: () => AdminRouteRoute,
+} as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
+  '/admin': typeof AdminRouteRouteWithChildren
   '/about': typeof AboutRoute
   '/buy-me': typeof BuyMeRoute
+  '/contact': typeof ContactRoute
   '/login': typeof LoginRoute
+  '/logout': typeof LogoutRoute
   '/questionnaire': typeof QuestionnaireRoute
+  '/register': typeof RegisterRoute
   '/results': typeof ResultsRoute
+  '/admin/gift-brain': typeof AdminGiftBrainRoute
+  '/admin/login': typeof AdminLoginRoute
+  '/admin/profile': typeof AdminProfileRoute
+  '/admin/settings': typeof AdminSettingsRoute
+  '/blogs/$slug': typeof BlogsSlugRoute
+  '/newsletter/unsubscribe': typeof NewsletterUnsubscribeRoute
+  '/admin/': typeof AdminIndexRoute
+  '/blogs/': typeof BlogsIndexRoute
+  '/admin/blogs/$id': typeof AdminBlogsIdRoute
+  '/admin/admins/': typeof AdminAdminsIndexRoute
+  '/admin/banners/': typeof AdminBannersIndexRoute
+  '/admin/blogs/': typeof AdminBlogsIndexRoute
+  '/admin/catalog/': typeof AdminCatalogIndexRoute
+  '/admin/newsletter/': typeof AdminNewsletterIndexRoute
+  '/admin/users/': typeof AdminUsersIndexRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/about': typeof AboutRoute
   '/buy-me': typeof BuyMeRoute
+  '/contact': typeof ContactRoute
   '/login': typeof LoginRoute
+  '/logout': typeof LogoutRoute
   '/questionnaire': typeof QuestionnaireRoute
+  '/register': typeof RegisterRoute
   '/results': typeof ResultsRoute
+  '/admin/gift-brain': typeof AdminGiftBrainRoute
+  '/admin/login': typeof AdminLoginRoute
+  '/admin/profile': typeof AdminProfileRoute
+  '/admin/settings': typeof AdminSettingsRoute
+  '/blogs/$slug': typeof BlogsSlugRoute
+  '/newsletter/unsubscribe': typeof NewsletterUnsubscribeRoute
+  '/admin': typeof AdminIndexRoute
+  '/blogs': typeof BlogsIndexRoute
+  '/admin/blogs/$id': typeof AdminBlogsIdRoute
+  '/admin/admins': typeof AdminAdminsIndexRoute
+  '/admin/banners': typeof AdminBannersIndexRoute
+  '/admin/blogs': typeof AdminBlogsIndexRoute
+  '/admin/catalog': typeof AdminCatalogIndexRoute
+  '/admin/newsletter': typeof AdminNewsletterIndexRoute
+  '/admin/users': typeof AdminUsersIndexRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
+  '/admin': typeof AdminRouteRouteWithChildren
   '/about': typeof AboutRoute
   '/buy-me': typeof BuyMeRoute
+  '/contact': typeof ContactRoute
   '/login': typeof LoginRoute
+  '/logout': typeof LogoutRoute
   '/questionnaire': typeof QuestionnaireRoute
+  '/register': typeof RegisterRoute
   '/results': typeof ResultsRoute
+  '/admin/gift-brain': typeof AdminGiftBrainRoute
+  '/admin/login': typeof AdminLoginRoute
+  '/admin/profile': typeof AdminProfileRoute
+  '/admin/settings': typeof AdminSettingsRoute
+  '/blogs/$slug': typeof BlogsSlugRoute
+  '/newsletter/unsubscribe': typeof NewsletterUnsubscribeRoute
+  '/admin/': typeof AdminIndexRoute
+  '/blogs/': typeof BlogsIndexRoute
+  '/admin/blogs/$id': typeof AdminBlogsIdRoute
+  '/admin/admins/': typeof AdminAdminsIndexRoute
+  '/admin/banners/': typeof AdminBannersIndexRoute
+  '/admin/blogs/': typeof AdminBlogsIndexRoute
+  '/admin/catalog/': typeof AdminCatalogIndexRoute
+  '/admin/newsletter/': typeof AdminNewsletterIndexRoute
+  '/admin/users/': typeof AdminUsersIndexRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
   fullPaths:
-    '/' | '/about' | '/buy-me' | '/login' | '/questionnaire' | '/results'
+    | '/'
+    | '/admin'
+    | '/about'
+    | '/buy-me'
+    | '/contact'
+    | '/login'
+    | '/logout'
+    | '/questionnaire'
+    | '/register'
+    | '/results'
+    | '/admin/gift-brain'
+    | '/admin/login'
+    | '/admin/profile'
+    | '/admin/settings'
+    | '/blogs/$slug'
+    | '/newsletter/unsubscribe'
+    | '/admin/'
+    | '/blogs/'
+    | '/admin/blogs/$id'
+    | '/admin/admins/'
+    | '/admin/banners/'
+    | '/admin/blogs/'
+    | '/admin/catalog/'
+    | '/admin/newsletter/'
+    | '/admin/users/'
   fileRoutesByTo: FileRoutesByTo
-  to: '/' | '/about' | '/buy-me' | '/login' | '/questionnaire' | '/results'
-  id:
-    | '__root__'
+  to:
     | '/'
     | '/about'
     | '/buy-me'
+    | '/contact'
     | '/login'
+    | '/logout'
     | '/questionnaire'
+    | '/register'
     | '/results'
+    | '/admin/gift-brain'
+    | '/admin/login'
+    | '/admin/profile'
+    | '/admin/settings'
+    | '/blogs/$slug'
+    | '/newsletter/unsubscribe'
+    | '/admin'
+    | '/blogs'
+    | '/admin/blogs/$id'
+    | '/admin/admins'
+    | '/admin/banners'
+    | '/admin/blogs'
+    | '/admin/catalog'
+    | '/admin/newsletter'
+    | '/admin/users'
+  id:
+    | '__root__'
+    | '/'
+    | '/admin'
+    | '/about'
+    | '/buy-me'
+    | '/contact'
+    | '/login'
+    | '/logout'
+    | '/questionnaire'
+    | '/register'
+    | '/results'
+    | '/admin/gift-brain'
+    | '/admin/login'
+    | '/admin/profile'
+    | '/admin/settings'
+    | '/blogs/$slug'
+    | '/newsletter/unsubscribe'
+    | '/admin/'
+    | '/blogs/'
+    | '/admin/blogs/$id'
+    | '/admin/admins/'
+    | '/admin/banners/'
+    | '/admin/blogs/'
+    | '/admin/catalog/'
+    | '/admin/newsletter/'
+    | '/admin/users/'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
+  AdminRouteRoute: typeof AdminRouteRouteWithChildren
   AboutRoute: typeof AboutRoute
   BuyMeRoute: typeof BuyMeRoute
+  ContactRoute: typeof ContactRoute
   LoginRoute: typeof LoginRoute
+  LogoutRoute: typeof LogoutRoute
   QuestionnaireRoute: typeof QuestionnaireRoute
+  RegisterRoute: typeof RegisterRoute
   ResultsRoute: typeof ResultsRoute
+  BlogsSlugRoute: typeof BlogsSlugRoute
+  NewsletterUnsubscribeRoute: typeof NewsletterUnsubscribeRoute
+  BlogsIndexRoute: typeof BlogsIndexRoute
 }
 
 declare module '@tanstack/react-router' {
@@ -113,11 +357,25 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AboutRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/admin': {
+      id: '/admin'
+      path: '/admin'
+      fullPath: '/admin'
+      preLoaderRoute: typeof AdminRouteRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/buy-me': {
       id: '/buy-me'
       path: '/buy-me'
       fullPath: '/buy-me'
       preLoaderRoute: typeof BuyMeRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/contact': {
+      id: '/contact'
+      path: '/contact'
+      fullPath: '/contact'
+      preLoaderRoute: typeof ContactRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/login': {
@@ -127,11 +385,25 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof LoginRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/logout': {
+      id: '/logout'
+      path: '/logout'
+      fullPath: '/logout'
+      preLoaderRoute: typeof LogoutRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/questionnaire': {
       id: '/questionnaire'
       path: '/questionnaire'
       fullPath: '/questionnaire'
       preLoaderRoute: typeof QuestionnaireRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/register': {
+      id: '/register'
+      path: '/register'
+      fullPath: '/register'
+      preLoaderRoute: typeof RegisterRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/results': {
@@ -141,16 +413,162 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ResultsRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/admin/': {
+      id: '/admin/'
+      path: '/'
+      fullPath: '/admin/'
+      preLoaderRoute: typeof AdminIndexRouteImport
+      parentRoute: typeof AdminRouteRoute
+    }
+    '/admin/gift-brain': {
+      id: '/admin/gift-brain'
+      path: '/gift-brain'
+      fullPath: '/admin/gift-brain'
+      preLoaderRoute: typeof AdminGiftBrainRouteImport
+      parentRoute: typeof AdminRouteRoute
+    }
+    '/admin/login': {
+      id: '/admin/login'
+      path: '/login'
+      fullPath: '/admin/login'
+      preLoaderRoute: typeof AdminLoginRouteImport
+      parentRoute: typeof AdminRouteRoute
+    }
+    '/admin/profile': {
+      id: '/admin/profile'
+      path: '/profile'
+      fullPath: '/admin/profile'
+      preLoaderRoute: typeof AdminProfileRouteImport
+      parentRoute: typeof AdminRouteRoute
+    }
+    '/admin/settings': {
+      id: '/admin/settings'
+      path: '/settings'
+      fullPath: '/admin/settings'
+      preLoaderRoute: typeof AdminSettingsRouteImport
+      parentRoute: typeof AdminRouteRoute
+    }
+    '/blogs/': {
+      id: '/blogs/'
+      path: '/blogs'
+      fullPath: '/blogs/'
+      preLoaderRoute: typeof BlogsIndexRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/blogs/$slug': {
+      id: '/blogs/$slug'
+      path: '/blogs/$slug'
+      fullPath: '/blogs/$slug'
+      preLoaderRoute: typeof BlogsSlugRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/newsletter/unsubscribe': {
+      id: '/newsletter/unsubscribe'
+      path: '/newsletter/unsubscribe'
+      fullPath: '/newsletter/unsubscribe'
+      preLoaderRoute: typeof NewsletterUnsubscribeRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/admin/admins/': {
+      id: '/admin/admins/'
+      path: '/admins'
+      fullPath: '/admin/admins/'
+      preLoaderRoute: typeof AdminAdminsIndexRouteImport
+      parentRoute: typeof AdminRouteRoute
+    }
+    '/admin/banners/': {
+      id: '/admin/banners/'
+      path: '/banners'
+      fullPath: '/admin/banners/'
+      preLoaderRoute: typeof AdminBannersIndexRouteImport
+      parentRoute: typeof AdminRouteRoute
+    }
+    '/admin/blogs/': {
+      id: '/admin/blogs/'
+      path: '/blogs'
+      fullPath: '/admin/blogs/'
+      preLoaderRoute: typeof AdminBlogsIndexRouteImport
+      parentRoute: typeof AdminRouteRoute
+    }
+    '/admin/blogs/$id': {
+      id: '/admin/blogs/$id'
+      path: '/blogs/$id'
+      fullPath: '/admin/blogs/$id'
+      preLoaderRoute: typeof AdminBlogsIdRouteImport
+      parentRoute: typeof AdminRouteRoute
+    }
+    '/admin/catalog/': {
+      id: '/admin/catalog/'
+      path: '/catalog'
+      fullPath: '/admin/catalog/'
+      preLoaderRoute: typeof AdminCatalogIndexRouteImport
+      parentRoute: typeof AdminRouteRoute
+    }
+    '/admin/newsletter/': {
+      id: '/admin/newsletter/'
+      path: '/newsletter'
+      fullPath: '/admin/newsletter/'
+      preLoaderRoute: typeof AdminNewsletterIndexRouteImport
+      parentRoute: typeof AdminRouteRoute
+    }
+    '/admin/users/': {
+      id: '/admin/users/'
+      path: '/users'
+      fullPath: '/admin/users/'
+      preLoaderRoute: typeof AdminUsersIndexRouteImport
+      parentRoute: typeof AdminRouteRoute
+    }
   }
 }
 
+interface AdminRouteRouteChildren {
+  AdminGiftBrainRoute: typeof AdminGiftBrainRoute
+  AdminLoginRoute: typeof AdminLoginRoute
+  AdminProfileRoute: typeof AdminProfileRoute
+  AdminSettingsRoute: typeof AdminSettingsRoute
+  AdminIndexRoute: typeof AdminIndexRoute
+  AdminBlogsIdRoute: typeof AdminBlogsIdRoute
+  AdminAdminsIndexRoute: typeof AdminAdminsIndexRoute
+  AdminBannersIndexRoute: typeof AdminBannersIndexRoute
+  AdminBlogsIndexRoute: typeof AdminBlogsIndexRoute
+  AdminCatalogIndexRoute: typeof AdminCatalogIndexRoute
+  AdminNewsletterIndexRoute: typeof AdminNewsletterIndexRoute
+  AdminUsersIndexRoute: typeof AdminUsersIndexRoute
+}
+
+const AdminRouteRouteChildren: AdminRouteRouteChildren = {
+  AdminGiftBrainRoute: AdminGiftBrainRoute,
+  AdminLoginRoute: AdminLoginRoute,
+  AdminProfileRoute: AdminProfileRoute,
+  AdminSettingsRoute: AdminSettingsRoute,
+  AdminIndexRoute: AdminIndexRoute,
+  AdminBlogsIdRoute: AdminBlogsIdRoute,
+  AdminAdminsIndexRoute: AdminAdminsIndexRoute,
+  AdminBannersIndexRoute: AdminBannersIndexRoute,
+  AdminBlogsIndexRoute: AdminBlogsIndexRoute,
+  AdminCatalogIndexRoute: AdminCatalogIndexRoute,
+  AdminNewsletterIndexRoute: AdminNewsletterIndexRoute,
+  AdminUsersIndexRoute: AdminUsersIndexRoute,
+}
+
+const AdminRouteRouteWithChildren = AdminRouteRoute._addFileChildren(
+  AdminRouteRouteChildren,
+)
+
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
+  AdminRouteRoute: AdminRouteRouteWithChildren,
   AboutRoute: AboutRoute,
   BuyMeRoute: BuyMeRoute,
+  ContactRoute: ContactRoute,
   LoginRoute: LoginRoute,
+  LogoutRoute: LogoutRoute,
   QuestionnaireRoute: QuestionnaireRoute,
+  RegisterRoute: RegisterRoute,
   ResultsRoute: ResultsRoute,
+  BlogsSlugRoute: BlogsSlugRoute,
+  NewsletterUnsubscribeRoute: NewsletterUnsubscribeRoute,
+  BlogsIndexRoute: BlogsIndexRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)

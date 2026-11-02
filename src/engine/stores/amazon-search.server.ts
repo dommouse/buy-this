@@ -268,9 +268,15 @@ function searchCatalogPhrase(req: StoreSearchRequest, limit: number): StoreProdu
     return scored.map(({ p }) => toStoreFromCatalog(p));
   }
 
-  // Amazon HTML blocked + no phrase overlap — still return budget-fit curated gifts
-  // so live/local never ends with an empty slot (better than random book junk later).
-  const fallback = pool.slice(0, limit).map(toStoreFromCatalog);
+  // Amazon HTML blocked + no phrase overlap — still return budget-fit curated gifts,
+  // but rotate by phrase hash so slots don't all get the same first N products.
+  const seed = phraseTokens(req.phrase).join("").length + (req.occasion || "").length;
+  const rotated = [...pool].sort((a, b) => {
+    const ha = (a.id.charCodeAt(0) + seed) % 97;
+    const hb = (b.id.charCodeAt(0) + seed) % 97;
+    return ha - hb;
+  });
+  const fallback = rotated.slice(0, limit).map(toStoreFromCatalog);
   if (fallback.length) {
     engineWarn(
       `engine: curated catalog soft-fill ${fallback.length} (no phrase match; Amazon may be blocked)`,
