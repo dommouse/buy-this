@@ -12,18 +12,16 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
-import { AVOID_CATEGORY_OPTIONS } from "@/admin/lib/avoid-categories";
 
 export const Route = createFileRoute("/admin/gift-brain")({
   component: GiftBrainConfigPage,
 });
 
-const AVOID_OPTIONS = AVOID_CATEGORY_OPTIONS;
-
 function GiftBrainConfigPage() {
   const [form, setForm] = useState<SettingsMap | null>(null);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
+  const [avoidDraft, setAvoidDraft] = useState("");
 
   useEffect(() => {
     (async () => {
@@ -56,24 +54,40 @@ function GiftBrainConfigPage() {
     setForm((f) => (f ? { ...f, [key]: value } : f));
   }
 
-  const avoidSelected = new Set(
-    str("ENGINE_AVOID_CATEGORIES")
-      .split(/[,|]+/)
-      .map((s) => s.trim().toLowerCase())
-      .filter(Boolean),
-  );
+  const avoidList = str("ENGINE_AVOID_CATEGORIES")
+    .split(/[,|]+/)
+    .map((s) => s.trim())
+    .filter(Boolean);
 
-  function addAvoid(id: string) {
-    if (!id || avoidSelected.has(id)) return;
-    set("ENGINE_AVOID_CATEGORIES", [...avoidSelected, id].join(","));
+  const avoidSelectedLower = new Set(avoidList.map((s) => s.toLowerCase()));
+
+  function addAvoid(raw: string) {
+    const parts = raw
+      .split(/[,|]+/)
+      .map((s) => s.trim())
+      .filter(Boolean);
+    if (!parts.length) return;
+    const next = [...avoidList];
+    let added = 0;
+    for (const part of parts) {
+      if (avoidSelectedLower.has(part.toLowerCase()) || next.some((x) => x.toLowerCase() === part.toLowerCase())) {
+        continue;
+      }
+      next.push(part);
+      added += 1;
+    }
+    if (!added) {
+      toast.error("That category is already in the list");
+      return;
+    }
+    set("ENGINE_AVOID_CATEGORIES", next.join(","));
+    setAvoidDraft("");
   }
 
-  function removeAvoid(id: string) {
-    const next = [...avoidSelected].filter((x) => x !== id);
+  function removeAvoid(value: string) {
+    const next = avoidList.filter((x) => x.toLowerCase() !== value.toLowerCase());
     set("ENGINE_AVOID_CATEGORIES", next.join(","));
   }
-
-  const avoidAvailable = AVOID_OPTIONS.filter((o) => !avoidSelected.has(o.id));
 
   return (
     <div>
@@ -233,43 +247,43 @@ function GiftBrainConfigPage() {
           <div className="space-y-2">
             <Label>Avoid categories</Label>
             <p className="text-xs text-muted-foreground">
-              Add categories the engine should never recommend. Pick from the dropdown to avoid duplicates.
+              Type a category or keyword the engine should never recommend (e.g. candles, wallets). Press
+              Enter or Add. Comma-separated values are supported.
             </p>
             <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
-              <Select
-                key={`avoid-${[...avoidSelected].join("|")}`}
-                onValueChange={(v) => addAvoid(v)}
-                disabled={!avoidAvailable.length}
+              <Input
+                value={avoidDraft}
+                onChange={(e) => setAvoidDraft(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") {
+                    e.preventDefault();
+                    addAvoid(avoidDraft);
+                  }
+                }}
+                placeholder="e.g. candles, perfume, kitchen gadgets"
+                className="sm:max-w-md"
+              />
+              <Button
+                type="button"
+                variant="outline"
+                disabled={!avoidDraft.trim()}
+                onClick={() => addAvoid(avoidDraft)}
               >
-                <SelectTrigger className="sm:max-w-xs">
-                  <SelectValue
-                    placeholder={avoidAvailable.length ? "Add a category…" : "All categories added"}
-                  />
-                </SelectTrigger>
-                <SelectContent>
-                  {avoidAvailable.map((opt) => (
-                    <SelectItem key={opt.id} value={opt.id}>
-                      {opt.label}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+                Add
+              </Button>
             </div>
             <ul className="divide-y rounded-lg border border-border/60 bg-white/40">
-              {[...avoidSelected].map((id) => {
-                const opt = AVOID_OPTIONS.find((o) => o.id === id);
-                return (
-                  <li key={id} className="flex items-center justify-between gap-3 px-3 py-2 text-sm">
-                    <span>{opt?.label || id}</span>
-                    <Button type="button" size="sm" variant="ghost" onClick={() => removeAvoid(id)}>
-                      Remove
-                    </Button>
-                  </li>
-                );
-              })}
-              {!avoidSelected.size ? (
+              {avoidList.map((value) => (
+                <li key={value.toLowerCase()} className="flex items-center justify-between gap-3 px-3 py-2 text-sm">
+                  <span className="capitalize">{value}</span>
+                  <Button type="button" size="sm" variant="ghost" onClick={() => removeAvoid(value)}>
+                    Remove
+                  </Button>
+                </li>
+              ))}
+              {!avoidList.length ? (
                 <li className="px-3 py-4 text-center text-xs text-muted-foreground">
-                  No avoided categories yet — add one from the dropdown.
+                  No avoided categories yet — type one above and click Add.
                 </li>
               ) : null}
             </ul>

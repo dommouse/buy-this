@@ -3,7 +3,7 @@
  * Cached ~30s so admin saves take effect without process restart.
  */
 import { getAppSetting } from "@/admin/lib/settings.server";
-import { engineConfig, type AvoidCategory } from "./config";
+import { DEFAULT_AVOID_CATEGORIES, engineConfig, type AvoidCategory } from "./config";
 
 let lastRefresh = 0;
 /** Short TTL so Gift Brain admin saves apply on the next recommend quickly. */
@@ -42,19 +42,39 @@ function asStr(v: unknown, fallback: string): string {
   return typeof v === "string" && v.trim() !== "" ? v.trim() : fallback;
 }
 
+/** Build avoid categories from free-text admin entries (ids or custom phrases). */
 function parseAvoidFromSetting(raw: unknown, fallback: AvoidCategory[]): AvoidCategory[] {
   // Explicit empty string from admin = clear all avoids (do not restore env defaults).
   if (typeof raw === "string" && raw.trim() === "") return [];
   if (typeof raw !== "string" || !raw.trim()) return fallback;
-  const wanted = new Set(
-    raw
-      .toLowerCase()
-      .split(/[,|]+/)
-      .map((s) => s.trim())
-      .filter(Boolean),
-  );
-  const matched = fallback.filter((c) => wanted.has(c.id) || wanted.has(c.label));
-  return matched.length ? matched : fallback;
+  const tokens = raw
+    .split(/[,|]+/)
+    .map((s) => s.trim())
+    .filter(Boolean);
+  if (!tokens.length) return [];
+
+  const out: AvoidCategory[] = [];
+  const seen = new Set<string>();
+  for (const token of tokens) {
+    const key = token.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    const known = DEFAULT_AVOID_CATEGORIES.find(
+      (c) => c.id === key || c.label.toLowerCase() === key || c.terms.includes(key),
+    );
+    if (known) {
+      out.push(known);
+      continue;
+    }
+    // Custom admin phrase — match title/category/tags containing this text.
+    const slug = key.replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "") || "custom";
+    out.push({
+      id: slug,
+      label: token,
+      terms: [key],
+    });
+  }
+  return out.length ? out : fallback;
 }
 
 /** Refresh mutable engineConfig fields from DB. Safe to call often. */

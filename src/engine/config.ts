@@ -93,16 +93,30 @@ export const DEFAULT_AVOID_CATEGORIES: AvoidCategory[] = [
 function parseAvoidCategories(): AvoidCategory[] {
   const raw = engineEnv("ENGINE_AVOID_CATEGORIES", "").trim();
   if (!raw) return DEFAULT_AVOID_CATEGORIES;
-  // Comma-separated ids from the default list, e.g. candles,perfume,wallets
-  const wanted = new Set(
-    raw
-      .toLowerCase()
-      .split(/[,|]+/)
-      .map((s) => s.trim())
-      .filter(Boolean),
-  );
-  const matched = DEFAULT_AVOID_CATEGORIES.filter((c) => wanted.has(c.id) || wanted.has(c.label));
-  return matched.length ? matched : DEFAULT_AVOID_CATEGORIES;
+  // Comma-separated known ids and/or free-text phrases
+  const tokens = raw
+    .split(/[,|]+/)
+    .map((s) => s.trim())
+    .filter(Boolean);
+  if (!tokens.length) return DEFAULT_AVOID_CATEGORIES;
+
+  const out: AvoidCategory[] = [];
+  const seen = new Set<string>();
+  for (const token of tokens) {
+    const key = token.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    const known = DEFAULT_AVOID_CATEGORIES.find(
+      (c) => c.id === key || c.label.toLowerCase() === key || c.terms.includes(key),
+    );
+    if (known) {
+      out.push(known);
+      continue;
+    }
+    const slug = key.replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "") || "custom";
+    out.push({ id: slug, label: token, terms: [key] });
+  }
+  return out.length ? out : DEFAULT_AVOID_CATEGORIES;
 }
 
 /** Map legacy ENGINE_MODE values onto Gift Brain. */
