@@ -79,7 +79,7 @@ export function PortalFooter({
           <ul className="mt-3 space-y-2 text-sm text-muted-foreground">
             <li>
               <button type="button" className="hover:text-primary" onClick={() => go("/questionnaire")}>
-                Find A Gift
+                Buy This
               </button>
             </li>
             <li>

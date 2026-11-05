@@ -50,12 +50,9 @@ function Index() {
   }, []);
 
   return (
-    <PortalShell landing fullBleed>
-      <section id="hero" className="scroll-mt-16">
-        <BannerSlider slides={banners} />
-      </section>
-
-      <section id="find-a-gift" className="scroll-mt-16 px-4 py-16 sm:px-6 lg:px-10">
+    <PortalShell landing>
+      {/* 1. Find Gift / BUY THIS */}
+      <section id="find-a-gift" className="scroll-mt-16 px-4 py-12 sm:px-6 sm:py-16 lg:px-10">
         <ScrollReveal>
           <button
             type="button"
@@ -68,7 +65,7 @@ function Index() {
               <img
                 src={logoUrl}
                 alt="Relationship Concierge"
-                className="h-28 w-auto max-w-[360px] object-contain sm:h-40 sm:max-w-[440px]"
+                className="h-40 w-auto max-w-[480px] object-contain sm:h-52 sm:max-w-[560px] lg:h-56"
               />
             </div>
             <div className="flex flex-col gap-6 sm:flex-row sm:items-center">
@@ -78,7 +75,7 @@ function Index() {
               <div className="min-w-0 flex-1">
                 <p className="inline-flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wide text-primary">
                   <Sparkles className="size-3.5" />
-                  Find A Gift
+                  Buy This
                 </p>
                 <h2 className="mt-2 text-2xl font-semibold tracking-tight text-foreground sm:text-3xl">
                   Not sure what to buy them?
@@ -89,16 +86,26 @@ function Index() {
                 </p>
               </div>
               <Button asChild size="lg" className="pointer-events-none shrink-0 font-bold uppercase">
-                <span>Find A Gift</span>
+                <span>Buy This</span>
               </Button>
             </div>
           </button>
         </ScrollReveal>
       </section>
 
+      {/* 2. Banner slider — content width, rounded */}
+      <section id="banners" className="scroll-mt-16 px-4 pb-12 sm:px-6 sm:pb-16 lg:px-10">
+        <ScrollReveal delayMs={40}>
+          <div className="mx-auto max-w-6xl overflow-hidden rounded-3xl shadow-sm ring-1 ring-black/5">
+            <BannerSlider slides={banners} contained />
+          </div>
+        </ScrollReveal>
+      </section>
+
+      {/* 3. Blogs */}
       <section id="blogs" className="scroll-mt-16 border-t border-white/40 bg-white/25 px-4 py-16 sm:px-6 lg:px-10">
         <ScrollReveal delayMs={80}>
-          <div className="mx-auto max-w-5xl">
+          <div className="mx-auto max-w-6xl">
             <div className="flex items-end justify-between gap-4">
               <div>
                 <h2 className="text-2xl font-semibold tracking-tight text-foreground">From the blog</h2>

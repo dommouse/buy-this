@@ -13,9 +13,19 @@ export type BannerSlide = {
   cta_label: string;
 };
 
-export function BannerSlider({ slides, intervalMs = 6000 }: { slides: BannerSlide[]; intervalMs?: number }) {
+export function BannerSlider({
+  slides,
+  intervalMs = 6000,
+  contained = false,
+}: {
+  slides: BannerSlide[];
+  intervalMs?: number;
+  /** When true, height fits content-area cards (not full-bleed viewport). */
+  contained?: boolean;
+}) {
   const [index, setIndex] = useState(0);
   const count = slides.length;
+  const minH = contained ? "min-h-[280px] sm:min-h-[360px] lg:min-h-[400px]" : "min-h-[56vh] sm:min-h-[68vh]";
 
   useEffect(() => {
     if (count <= 1) return;
@@ -27,14 +37,19 @@ export function BannerSlider({ slides, intervalMs = 6000 }: { slides: BannerSlid
 
   if (!count) {
     return (
-      <section className="relative flex min-h-[56vh] items-end justify-center bg-gradient-to-br from-primary/20 via-background to-secondary/40 px-4 pb-10 pt-16 sm:min-h-[62vh] sm:px-8">
+      <section
+        className={cn(
+          "relative flex items-end justify-center bg-gradient-to-br from-primary/20 via-background to-secondary/40 px-4 pb-10 pt-12 sm:px-8",
+          minH,
+        )}
+      >
         <div className="banner-glass w-full max-w-3xl p-6 text-center sm:p-8">
           <h1 className="text-3xl font-semibold tracking-tight text-foreground sm:text-4xl">
             Every person. Every occasion.
           </h1>
-          <p className="mt-3 text-muted-foreground">The perfect gift — start Find A Gift.</p>
+          <p className="mt-3 text-muted-foreground">The perfect gift — start with Buy This.</p>
           <Button asChild className="mt-6 font-bold uppercase">
-            <a href="/questionnaire">Find A Gift</a>
+            <a href="/questionnaire">Buy This</a>
           </Button>
         </div>
       </section>
@@ -51,7 +66,7 @@ export function BannerSlider({ slides, intervalMs = 6000 }: { slides: BannerSlid
   const isInternal = ctaHref.startsWith("/");
 
   return (
-    <section className="relative min-h-[56vh] overflow-hidden sm:min-h-[68vh]">
+    <section className={cn("relative overflow-hidden", minH)}>
       {slides.map((s, i) => (
         <div
           key={s.id}
@@ -66,18 +81,25 @@ export function BannerSlider({ slides, intervalMs = 6000 }: { slides: BannerSlid
         </div>
       ))}
 
-      <div className="relative z-10 flex min-h-[56vh] items-end px-4 pb-14 pt-20 sm:min-h-[68vh] sm:px-8 sm:pb-16 lg:px-12">
+      <div
+        className={cn(
+          "relative z-10 flex items-end px-4 pb-12 pt-14 sm:px-8 sm:pb-14 lg:px-10",
+          minH,
+        )}
+      >
         <div className="banner-glass w-full max-w-3xl p-5 sm:p-7">
-          <h1 className="text-balance text-3xl font-semibold tracking-tight text-white drop-shadow-sm sm:text-5xl">
+          <h1 className="text-balance text-2xl font-semibold tracking-tight text-white drop-shadow-sm sm:text-4xl lg:text-5xl">
             {slide.title}
           </h1>
           {slide.description ? (
-            <p className="mt-3 text-pretty text-base leading-7 text-white/90 sm:text-lg">{slide.description}</p>
+            <p className="mt-3 text-pretty text-sm leading-7 text-white/90 sm:text-base lg:text-lg">
+              {slide.description}
+            </p>
           ) : null}
           <div className="mt-5">
             <Button asChild size="lg" className="font-bold uppercase shadow-md">
               {isInternal ? (
-                <a href={ctaHref}>{slide.cta_label || "Find A Gift"}</a>
+                <a href={ctaHref}>{slide.cta_label || "Buy This"}</a>
               ) : (
                 <a href={ctaHref} target="_blank" rel="noreferrer">
                   {slide.cta_label || "Learn more"}
