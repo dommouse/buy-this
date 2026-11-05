@@ -65,7 +65,8 @@ function Index() {
               <img
                 src={logoUrl}
                 alt="Relationship Concierge"
-                className="h-40 w-auto max-w-[480px] object-contain sm:h-52 sm:max-w-[560px] lg:h-56"
+                className="w-auto max-w-full object-contain"
+                style={{ height: "calc(var(--spacing) * 100)" }}
               />
             </div>
             <div className="flex flex-col gap-6 sm:flex-row sm:items-center">
